@@ -5,7 +5,7 @@ import pandas as pd
 import string
 import random
 import math
-
+#------------------------------------------------------------------------------------------------------
 """Data preprocessing"""
 # Load the pre-filtered city data
 cities_df = pd.read_csv('filtered_worldcities.csv')
@@ -17,7 +17,7 @@ cities_df['city'] = cities_df['city'].str.upper()
 tanzanian_cities = cities_df[cities_df['iso2'] == 'TZ']['city'].tolist()
 non_tanzanian_cities = cities_df[cities_df['iso2'] != 'TZ']['city'].tolist()
 all_cities = tanzanian_cities + non_tanzanian_cities
-
+#------------------------------------------------------------------------------------------------------
 """Simulate the biased selection (50% Tanzania, 50% other)"""
 def get_weighted_cities():
     # Create weights based on the 50/50 bias
@@ -29,7 +29,8 @@ def get_weighted_cities():
             weights.append(0.5 / len(non_tanzanian_cities))
     
     return all_cities, weights
-
+#------------------------------------------------------------------------------------------------------
+"""Calculate the information gain from guessing a letter."""
 def calculate_information_gain(cities, letter):
     total_cities = len(cities)
     if total_cities <= 1:
@@ -61,7 +62,7 @@ def calculate_information_gain(cities, letter):
     
     # Information gain is the reduction in entropy
     return current_entropy - new_entropy
-
+#------------------------------------------------------------------------------------------------------
 """Filter the word list based on feedback and previous guesses."""
 def filter_words(word_list, feedback, guesses):
     filtered_list = []
@@ -96,7 +97,7 @@ def filter_words(word_list, feedback, guesses):
             filtered_list.append(word)
     
     return filtered_list
-
+#------------------------------------------------------------------------------------------------------
 """Filter the word list based on feedback and previous guesses for advanced rules."""
 def filter_words_advanced(word_list, feedback, guesses):
     filtered_list = []
@@ -148,9 +149,12 @@ def filter_words_advanced(word_list, feedback, guesses):
             filtered_list.append(word)
     
     return filtered_list
-
+#------------------------------------------------------------------------------------------------------
 """Update word probabilities based on the Tanzanian bias."""
 def update_word_probabilities(word_list):
+    if not word_list:
+        return []
+        
     probabilities = []
     
     tz_cities = [city for city in word_list if city in tanzanian_cities]
@@ -167,22 +171,45 @@ def update_word_probabilities(word_list):
         probabilities.append(prob)
     
     return probabilities
-
+#------------------------------------------------------------------------------------------------------
 """Main agent function"""
 def agent_function(request_data, request_info):
     feedback = request_data['feedback']
     guesses = request_data['guesses']
     
-    # Initialize the word list if this is the first guess
+    # Initialize the word list and previous feedback if this is the first guess
     if not hasattr(agent_function, 'word_list'):
         agent_function.word_list = all_cities
         agent_function.advanced_rules = len(feedback) > 7  # Guess if advanced rules are used
+        agent_function.previous_feedback = ""
+    
+    # If the feedback hasn't changed after a letter guess, that letter is not in the word
+    if agent_function.previous_feedback == feedback and len(guesses) > 0:
+        last_guess = guesses[-1]
+        if len(last_guess) == 1:  # It's a letter guess
+            # Further filter words that contain this letter
+            agent_function.word_list = [word for word in agent_function.word_list if last_guess not in word]
+    
+    # Update previous feedback
+    agent_function.previous_feedback = feedback
     
     # Determine if we're using standard or advanced rules
     if agent_function.advanced_rules:
         possible_words = filter_words_advanced(agent_function.word_list, feedback, guesses)
     else:
         possible_words = filter_words(agent_function.word_list, feedback, guesses)
+    
+    # If no words match the criteria, reset the word list and try again
+    # This is a recovery mechanism, not a fallback
+    if not possible_words:
+        # Reset the word list to all cities that match the current feedback pattern
+        if agent_function.advanced_rules:
+            possible_words = [city for city in all_cities if len(city) <= len(feedback)]
+        else:
+            possible_words = [city for city in all_cities if len(city) == len(feedback)]
+        
+        # Further filter using the current feedback
+        possible_words = [word for word in possible_words if is_compatible(word, feedback)]
     
     agent_function.word_list = possible_words
     
@@ -192,8 +219,10 @@ def agent_function(request_data, request_info):
     
     # If few words remain, might be better to guess the word directly
     if len(possible_words) <= 3:
-        probabilities = update_word_probabilities(possible_words)
-        return possible_words[probabilities.index(max(probabilities))]
+        # Find a word that hasn't been guessed yet
+        for word in possible_words:
+            if word not in guesses:
+                return word
     
     # Otherwise, find the best letter to guess
     best_letter = None
@@ -208,9 +237,25 @@ def agent_function(request_data, request_info):
             max_gain = gain
             best_letter = letter
     
+    # If no letter found, find any unguessed letter
+    if best_letter is None:
+        for letter in string.ascii_uppercase:
+            if letter not in guesses:
+                return letter
+        
     return best_letter
 
-
+# Helper function to check if a word is compatible with the feedback
+def is_compatible(word, feedback):
+    if len(word) > len(feedback):
+        return False
+        
+    for i, (w_char, f_char) in enumerate(zip(word, feedback)):
+        if f_char != '-' and w_char != f_char:
+            return False
+    
+    return True
+#------------------------------------------------------------------------------------------------------
 """Run the agent"""
 if __name__ == '__main__':
     import sys, logging
