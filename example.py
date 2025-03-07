@@ -5,6 +5,8 @@ import pandas as pd
 import string
 import random
 import math
+from collections import defaultdict  # Import defaultdict here
+
 #------------------------------------------------------------------------------------------------------
 """Data preprocessing"""
 # Load the pre-filtered city data
@@ -17,6 +19,7 @@ cities_df['city'] = cities_df['city'].str.upper()
 tanzanian_cities = cities_df[cities_df['iso2'] == 'TZ']['city'].tolist()
 non_tanzanian_cities = cities_df[cities_df['iso2'] != 'TZ']['city'].tolist()
 all_cities = tanzanian_cities + non_tanzanian_cities
+
 #------------------------------------------------------------------------------------------------------
 """Simulate the biased selection (50% Tanzania, 50% other)"""
 def get_weighted_cities():
@@ -29,39 +32,36 @@ def get_weighted_cities():
             weights.append(0.5 / len(non_tanzanian_cities))
     
     return all_cities, weights
+
 #------------------------------------------------------------------------------------------------------
 """Calculate the information gain from guessing a letter."""
-def calculate_information_gain(cities, letter):
-    total_cities = len(cities)
-    if total_cities <= 1:
+def calculate_information_gain(possible_words, probabilities, letter):
+    if len(possible_words) == 0:
         return 0
-    
-    # Current entropy (before guessing)
-    current_entropy = -sum(1/total_cities * math.log2(1/total_cities) for _ in range(total_cities))
-    
-    # Group cities by the pattern they would create if we guessed the letter
-    patterns = {}
-    for city in cities:
-        pattern = ""
-        for char in city:
-            if char == letter:
-                pattern += letter
-            else:
-                pattern += "-"
-        if pattern not in patterns:
-            patterns[pattern] = []
-        patterns[pattern].append(city)
-    
-    # Calculate entropy after guessing (weighted by probability of each pattern)
-    new_entropy = 0
-    for pattern, matching_cities in patterns.items():
-        probability = len(matching_cities) / total_cities
-        if probability > 0:
-            entropy = -sum(1/len(matching_cities) * math.log2(1/len(matching_cities)) for _ in range(len(matching_cities)))
-            new_entropy += probability * entropy
-    
-    # Information gain is the reduction in entropy
-    return current_entropy - new_entropy
+
+    # Current entropy (using actual probabilities)
+    current_entropy = -sum(p * math.log2(p) for p in probabilities if p > 0)
+
+    # Group words by their pattern and track their probabilities
+    pattern_probs = defaultdict(float)
+    pattern_words = defaultdict(list)
+    for word, prob in zip(possible_words, probabilities):
+        pattern = "".join([letter if char == letter else '-' for char in word])
+        pattern_probs[pattern] += prob
+        pattern_words[pattern].append((word, prob))
+
+    # Calculate expected entropy after guessing the letter
+    expected_entropy = 0
+    for pattern, total_prob in pattern_probs.items():
+        if total_prob == 0:
+            continue
+        # Calculate entropy for this pattern
+        conditional_probs = [prob / total_prob for (_, prob) in pattern_words[pattern]]
+        entropy = -sum(p * math.log2(p) for p in conditional_probs if p > 0)
+        expected_entropy += total_prob * entropy
+
+    return current_entropy - expected_entropy
+
 #------------------------------------------------------------------------------------------------------
 """Filter the word list based on feedback and previous guesses."""
 def filter_words(word_list, feedback, guesses):
@@ -97,6 +97,7 @@ def filter_words(word_list, feedback, guesses):
             filtered_list.append(word)
     
     return filtered_list
+
 #------------------------------------------------------------------------------------------------------
 """Filter the word list based on feedback and previous guesses for advanced rules."""
 def filter_words_advanced(word_list, feedback, guesses):
@@ -149,6 +150,7 @@ def filter_words_advanced(word_list, feedback, guesses):
             filtered_list.append(word)
     
     return filtered_list
+
 #------------------------------------------------------------------------------------------------------
 """Update word probabilities based on the Tanzanian bias."""
 def update_word_probabilities(word_list):
@@ -188,9 +190,9 @@ def agent_function(request_data, request_info):
     feedback = request_data['feedback']
     guesses = request_data['guesses']
     
-    print("--------------------------------------------------")
     print(f"Current feedback: {feedback}")
     print(f"Previous guesses: {guesses}")
+    print("--------------------------------------------------")
     
     # If the word is completely revealed (no dashes) and not yet guessed as a whole word
     if '-' not in feedback and feedback not in guesses:
@@ -203,7 +205,7 @@ def agent_function(request_data, request_info):
         agent_function.previous_feedback = ""
         agent_function.incorrect_words = set()  # Track incorrect word guesses
     
-    # If the feedback hasn't changed after a guess, that guess was incorrect
+    # If the feedback hasn't changed after a letter guess, that letter is not in the word
     if agent_function.previous_feedback == feedback and len(guesses) > 0:
         last_guess = guesses[-1]
         if len(last_guess) == 1:  # It's a letter guess
@@ -240,99 +242,33 @@ def agent_function(request_data, request_info):
     
     agent_function.word_list = possible_words
     
-    # Count how many letter guesses we've made and how many dashes remain
-    letter_guess_count = sum(1 for g in guesses if len(g) == 1)
-    dash_count = feedback.count('-')
-    revealed_ratio = 1 - (dash_count / len(feedback))
+    # Calculate probabilities for possible_words
+    probabilities = update_word_probabilities(possible_words)
     
-    # If only one possible word remains, guess it immediately
-    if len(possible_words) == 1:
-        if possible_words[0] not in agent_function.incorrect_words and possible_words[0] not in guesses:
-            return possible_words[0]
-    
-    # If most of the word is revealed (60% or more), try guessing the word
-    if revealed_ratio >= 0.6 and len(possible_words) > 0:
-        # Sort by probability if using Tanzanian bias
-        word_probabilities = update_word_probabilities(possible_words)
-        if word_probabilities:
-            sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
-            # Return the most likely word that hasn't been guessed yet
-            for word in sorted_words[:1]:  # Only try the most likely word
-                if word not in agent_function.incorrect_words and word not in guesses:
-                    return word
-    
-    # If we have few remaining dashes (2 or fewer), try guessing the word
-    if dash_count <= 2 and len(possible_words) > 0:
-        word_probabilities = update_word_probabilities(possible_words)
-        if word_probabilities:
-            sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
-            # Return the most likely word that hasn't been guessed yet
-            for word in sorted_words:
-                if word not in agent_function.incorrect_words and word not in guesses:
-                    return word
-    
-    # If few words remain (3 or fewer) AND we have a good amount of revealed info (at least 40%), guess the word
-    if len(possible_words) <= 3 and revealed_ratio >= 0.4:
+    # If few words remain AND we've made at least 3 letter guesses, we can guess the word
+    if len(possible_words) <= 3 and sum(1 for g in guesses if len(g) == 1) >= 3:
         # Sort by probability if using Tanzanian bias
         word_probabilities = update_word_probabilities(possible_words)
         if word_probabilities:
             sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
             # Return the most likely word that hasn't been guessed yet
             for word in sorted_words:
-                if word not in agent_function.incorrect_words and word not in guesses:
-                    return word
-    
-    # If we've guessed a reasonable number of letters (2+) and have few possibilities, try a word
-    if letter_guess_count >= 2 and len(possible_words) <= 5:
-        # Sort by probability if using Tanzanian bias
-        word_probabilities = update_word_probabilities(possible_words)
-        if word_probabilities:
-            sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
-            # Return the most likely word that hasn't been guessed yet
-            for word in sorted_words[:1]:  # Only try the most likely word
                 if word not in agent_function.incorrect_words and word not in guesses:
                     return word
     
     # Otherwise, find the best letter to guess
     best_letter = None
     max_gain = -1
-    
-    # Consider common letters in city names first, prioritizing those not yet guessed
-    common_letters = ['A', 'E', 'I', 'O', 'R', 'T', 'N', 'S', 'L', 'C', 'M', 'D', 'P', 'K', 'B']
-    
-    # First check common letters
-    for letter in common_letters:
+    for letter in string.ascii_uppercase:
         if letter in guesses:
             continue
-        
-        gain = calculate_information_gain(possible_words, letter)
+        gain = calculate_information_gain(possible_words, probabilities, letter)
         if gain > max_gain:
             max_gain = gain
             best_letter = letter
     
-    # Then check all other letters
-    if best_letter is None or max_gain == 0:
-        for letter in string.ascii_uppercase:
-            if letter in guesses or letter in common_letters:
-                continue
-            
-            gain = calculate_information_gain(possible_words, letter)
-            if gain > max_gain:
-                max_gain = gain
-                best_letter = letter
-    
-    # If no letter found, check if all letters in the feedback have been revealed
-    if best_letter is None:
-        # Check if all letters are revealed but we haven't guessed the word yet
-        if '-' not in feedback and feedback not in guesses:
-            return feedback
-            
-        # Otherwise find any unguessed letter
-        for letter in string.ascii_uppercase:
-            if letter not in guesses:
-                return letter
-        
     return best_letter
+
 #------------------------------------------------------------------------------------------------------
 """Run the agent"""
 if __name__ == '__main__':
@@ -345,6 +281,6 @@ if __name__ == '__main__':
     run(
         agent_config_file=sys.argv[1],
         agent=agent_function,
-        parallel_runs=False,     # Set it to False for debugging.
-        run_limit=1000,         # Stop after 1000 runs. Set to 1 for debugging.
+        parallel_runs=True,     # Set it to False for debugging.
+        run_limit=100000000,         # Stop after 100000000 runs. Set to 1 for debugging.
     )
