@@ -188,9 +188,9 @@ def agent_function(request_data, request_info):
     feedback = request_data['feedback']
     guesses = request_data['guesses']
     
+    print("--------------------------------------------------")
     print(f"Current feedback: {feedback}")
     print(f"Previous guesses: {guesses}")
-    print("--------------------------------------------------")
     
     # If the word is completely revealed (no dashes) and not yet guessed as a whole word
     if '-' not in feedback and feedback not in guesses:
@@ -203,7 +203,7 @@ def agent_function(request_data, request_info):
         agent_function.previous_feedback = ""
         agent_function.incorrect_words = set()  # Track incorrect word guesses
     
-    # If the feedback hasn't changed after a letter guess, that letter is not in the word
+    # If the feedback hasn't changed after a guess, that guess was incorrect
     if agent_function.previous_feedback == feedback and len(guesses) > 0:
         last_guess = guesses[-1]
         if len(last_guess) == 1:  # It's a letter guess
@@ -226,7 +226,6 @@ def agent_function(request_data, request_info):
     possible_words = [word for word in possible_words if word not in agent_function.incorrect_words]
     
     # If no words match the criteria, reset the word list and try again
-    # This is a recovery mechanism, not a fallback
     if not possible_words:
         # Reset the word list to all cities that match the current feedback pattern
         if agent_function.advanced_rules:
@@ -241,31 +240,68 @@ def agent_function(request_data, request_info):
     
     agent_function.word_list = possible_words
     
-    # If all letters are revealed but we haven't guessed the word as a whole yet
-    if '-' not in feedback and feedback not in guesses:
-        return feedback
-    
-    # Count how many letter guesses we've made
+    # Count how many letter guesses we've made and how many dashes remain
     letter_guess_count = sum(1 for g in guesses if len(g) == 1)
+    dash_count = feedback.count('-')
+    revealed_ratio = 1 - (dash_count / len(feedback))
     
-    # Only guess the word if we've made at least 3 letter guesses AND
-    # If only one word remains, guess it (and we haven't guessed it before)
-    if letter_guess_count >= 3 and len(possible_words) == 1:
-        if possible_words[0] not in agent_function.incorrect_words:
+    # If only one possible word remains, guess it immediately
+    if len(possible_words) == 1:
+        if possible_words[0] not in agent_function.incorrect_words and possible_words[0] not in guesses:
             return possible_words[0]
     
-    # If few words remain AND we've made at least 3 letter guesses, we can guess the word
-    if letter_guess_count >= 3 and len(possible_words) <= 3:
-        # Find a word that hasn't been guessed yet
-        for word in possible_words:
-            if word not in guesses and word not in agent_function.incorrect_words:
-                return word
+    # If most of the word is revealed (60% or more), try guessing the word
+    if revealed_ratio >= 0.6 and len(possible_words) > 0:
+        # Sort by probability if using Tanzanian bias
+        word_probabilities = update_word_probabilities(possible_words)
+        if word_probabilities:
+            sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
+            # Return the most likely word that hasn't been guessed yet
+            for word in sorted_words[:1]:  # Only try the most likely word
+                if word not in agent_function.incorrect_words and word not in guesses:
+                    return word
+    
+    # If we have few remaining dashes (2 or fewer), try guessing the word
+    if dash_count <= 2 and len(possible_words) > 0:
+        word_probabilities = update_word_probabilities(possible_words)
+        if word_probabilities:
+            sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
+            # Return the most likely word that hasn't been guessed yet
+            for word in sorted_words:
+                if word not in agent_function.incorrect_words and word not in guesses:
+                    return word
+    
+    # If few words remain (3 or fewer) AND we have a good amount of revealed info (at least 40%), guess the word
+    if len(possible_words) <= 3 and revealed_ratio >= 0.4:
+        # Sort by probability if using Tanzanian bias
+        word_probabilities = update_word_probabilities(possible_words)
+        if word_probabilities:
+            sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
+            # Return the most likely word that hasn't been guessed yet
+            for word in sorted_words:
+                if word not in agent_function.incorrect_words and word not in guesses:
+                    return word
+    
+    # If we've guessed a reasonable number of letters (2+) and have few possibilities, try a word
+    if letter_guess_count >= 2 and len(possible_words) <= 5:
+        # Sort by probability if using Tanzanian bias
+        word_probabilities = update_word_probabilities(possible_words)
+        if word_probabilities:
+            sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
+            # Return the most likely word that hasn't been guessed yet
+            for word in sorted_words[:1]:  # Only try the most likely word
+                if word not in agent_function.incorrect_words and word not in guesses:
+                    return word
     
     # Otherwise, find the best letter to guess
     best_letter = None
     max_gain = -1
     
-    for letter in string.ascii_uppercase:
+    # Consider common letters in city names first, prioritizing those not yet guessed
+    common_letters = ['A', 'E', 'I', 'O', 'R', 'T', 'N', 'S', 'L', 'C', 'M', 'D', 'P', 'K', 'B']
+    
+    # First check common letters
+    for letter in common_letters:
         if letter in guesses:
             continue
         
@@ -273,6 +309,17 @@ def agent_function(request_data, request_info):
         if gain > max_gain:
             max_gain = gain
             best_letter = letter
+    
+    # Then check all other letters
+    if best_letter is None or max_gain == 0:
+        for letter in string.ascii_uppercase:
+            if letter in guesses or letter in common_letters:
+                continue
+            
+            gain = calculate_information_gain(possible_words, letter)
+            if gain > max_gain:
+                max_gain = gain
+                best_letter = letter
     
     # If no letter found, check if all letters in the feedback have been revealed
     if best_letter is None:
