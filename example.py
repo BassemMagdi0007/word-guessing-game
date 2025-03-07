@@ -3,10 +3,8 @@
 """
 import pandas as pd
 import string
-import random
 import math
-from collections import defaultdict  # Import defaultdict here
-
+from collections import defaultdict
 #------------------------------------------------------------------------------------------------------
 """Data preprocessing"""
 # Load the pre-filtered city data
@@ -20,6 +18,8 @@ tanzanian_cities = cities_df[cities_df['iso2'] == 'TZ']['city'].tolist()
 non_tanzanian_cities = cities_df[cities_df['iso2'] != 'TZ']['city'].tolist()
 all_cities = tanzanian_cities + non_tanzanian_cities
 
+# Cache for initial guesses based on word length
+initial_guess_cache = {}
 #------------------------------------------------------------------------------------------------------
 """Simulate the biased selection (50% Tanzania, 50% other)"""
 def get_weighted_cities():
@@ -32,7 +32,6 @@ def get_weighted_cities():
             weights.append(0.5 / len(non_tanzanian_cities))
     
     return all_cities, weights
-
 #------------------------------------------------------------------------------------------------------
 """Calculate the information gain from guessing a letter."""
 def calculate_information_gain(possible_words, probabilities, letter):
@@ -61,7 +60,17 @@ def calculate_information_gain(possible_words, probabilities, letter):
         expected_entropy += total_prob * entropy
 
     return current_entropy - expected_entropy
-
+#------------------------------------------------------------------------------------------------------
+# Helper function to check if a word is compatible with the feedback
+def is_compatible(word, feedback):
+    if len(word) > len(feedback):
+        return False
+        
+    for i, (w_char, f_char) in enumerate(zip(word, feedback)):
+        if f_char != '-' and w_char != f_char:
+            return False
+    
+    return True
 #------------------------------------------------------------------------------------------------------
 """Filter the word list based on feedback and previous guesses."""
 def filter_words(word_list, feedback, guesses):
@@ -173,26 +182,41 @@ def update_word_probabilities(word_list):
         probabilities.append(prob)
     
     return probabilities
+
 #------------------------------------------------------------------------------------------------------
-# Helper function to check if a word is compatible with the feedback
-def is_compatible(word, feedback):
-    if len(word) > len(feedback):
-        return False
-        
-    for i, (w_char, f_char) in enumerate(zip(word, feedback)):
-        if f_char != '-' and w_char != f_char:
-            return False
+"""Get the best initial guess for a given word length."""
+def get_initial_guess(word_length):
+    if word_length in initial_guess_cache:
+        return initial_guess_cache[word_length]
     
-    return True
+    # Filter cities by length
+    possible_words = [city for city in all_cities if len(city) == word_length]
+    
+    # Calculate probabilities
+    probabilities = update_word_probabilities(possible_words)
+    
+    # Find the letter with the highest information gain
+    best_letter = None
+    max_gain = -1
+    for letter in string.ascii_uppercase:
+        gain = calculate_information_gain(possible_words, probabilities, letter)
+        if gain > max_gain:
+            max_gain = gain
+            best_letter = letter
+    
+    # Cache the result
+    initial_guess_cache[word_length] = best_letter
+    return best_letter
+
 #------------------------------------------------------------------------------------------------------
 """Main agent function"""
 def agent_function(request_data, request_info):
     feedback = request_data['feedback']
     guesses = request_data['guesses']
     
-    print(f"Current feedback: {feedback}")
-    print(f"Previous guesses: {guesses}")
-    print("--------------------------------------------------")
+    # print(f"Current feedback: {feedback}")
+    # print(f"Previous guesses: {guesses}")
+    # print("--------------------------------------------------")
     
     # If the word is completely revealed (no dashes) and not yet guessed as a whole word
     if '-' not in feedback and feedback not in guesses:
