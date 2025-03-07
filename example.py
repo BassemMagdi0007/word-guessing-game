@@ -172,16 +172,36 @@ def update_word_probabilities(word_list):
     
     return probabilities
 #------------------------------------------------------------------------------------------------------
+# Helper function to check if a word is compatible with the feedback
+def is_compatible(word, feedback):
+    if len(word) > len(feedback):
+        return False
+        
+    for i, (w_char, f_char) in enumerate(zip(word, feedback)):
+        if f_char != '-' and w_char != f_char:
+            return False
+    
+    return True
+#------------------------------------------------------------------------------------------------------
 """Main agent function"""
 def agent_function(request_data, request_info):
     feedback = request_data['feedback']
     guesses = request_data['guesses']
+    
+    print(f"Current feedback: {feedback}")
+    print(f"Previous guesses: {guesses}")
+    print("--------------------------------------------------")
+    
+    # If the word is completely revealed (no dashes) and not yet guessed as a whole word
+    if '-' not in feedback and feedback not in guesses:
+        return feedback
     
     # Initialize the word list and previous feedback if this is the first guess
     if not hasattr(agent_function, 'word_list'):
         agent_function.word_list = all_cities
         agent_function.advanced_rules = len(feedback) > 7  # Guess if advanced rules are used
         agent_function.previous_feedback = ""
+        agent_function.incorrect_words = set()  # Track incorrect word guesses
     
     # If the feedback hasn't changed after a letter guess, that letter is not in the word
     if agent_function.previous_feedback == feedback and len(guesses) > 0:
@@ -189,6 +209,9 @@ def agent_function(request_data, request_info):
         if len(last_guess) == 1:  # It's a letter guess
             # Further filter words that contain this letter
             agent_function.word_list = [word for word in agent_function.word_list if last_guess not in word]
+        elif last_guess not in agent_function.incorrect_words:
+            # If a word guess was incorrect, add it to our set of incorrect word guesses
+            agent_function.incorrect_words.add(last_guess)
     
     # Update previous feedback
     agent_function.previous_feedback = feedback
@@ -198,6 +221,9 @@ def agent_function(request_data, request_info):
         possible_words = filter_words_advanced(agent_function.word_list, feedback, guesses)
     else:
         possible_words = filter_words(agent_function.word_list, feedback, guesses)
+    
+    # Filter out words that we've already guessed and were incorrect
+    possible_words = [word for word in possible_words if word not in agent_function.incorrect_words]
     
     # If no words match the criteria, reset the word list and try again
     # This is a recovery mechanism, not a fallback
@@ -210,18 +236,29 @@ def agent_function(request_data, request_info):
         
         # Further filter using the current feedback
         possible_words = [word for word in possible_words if is_compatible(word, feedback)]
+        # Remove any words we've already tried
+        possible_words = [word for word in possible_words if word not in agent_function.incorrect_words]
     
     agent_function.word_list = possible_words
     
-    # If only one word remains, guess it
-    if len(possible_words) == 1:
-        return possible_words[0]
+    # If all letters are revealed but we haven't guessed the word as a whole yet
+    if '-' not in feedback and feedback not in guesses:
+        return feedback
     
-    # If few words remain, might be better to guess the word directly
-    if len(possible_words) <= 3:
+    # Count how many letter guesses we've made
+    letter_guess_count = sum(1 for g in guesses if len(g) == 1)
+    
+    # Only guess the word if we've made at least 3 letter guesses AND
+    # If only one word remains, guess it (and we haven't guessed it before)
+    if letter_guess_count >= 3 and len(possible_words) == 1:
+        if possible_words[0] not in agent_function.incorrect_words:
+            return possible_words[0]
+    
+    # If few words remain AND we've made at least 3 letter guesses, we can guess the word
+    if letter_guess_count >= 3 and len(possible_words) <= 3:
         # Find a word that hasn't been guessed yet
         for word in possible_words:
-            if word not in guesses:
+            if word not in guesses and word not in agent_function.incorrect_words:
                 return word
     
     # Otherwise, find the best letter to guess
@@ -237,24 +274,18 @@ def agent_function(request_data, request_info):
             max_gain = gain
             best_letter = letter
     
-    # If no letter found, find any unguessed letter
+    # If no letter found, check if all letters in the feedback have been revealed
     if best_letter is None:
+        # Check if all letters are revealed but we haven't guessed the word yet
+        if '-' not in feedback and feedback not in guesses:
+            return feedback
+            
+        # Otherwise find any unguessed letter
         for letter in string.ascii_uppercase:
             if letter not in guesses:
                 return letter
         
     return best_letter
-
-# Helper function to check if a word is compatible with the feedback
-def is_compatible(word, feedback):
-    if len(word) > len(feedback):
-        return False
-        
-    for i, (w_char, f_char) in enumerate(zip(word, feedback)):
-        if f_char != '-' and w_char != f_char:
-            return False
-    
-    return True
 #------------------------------------------------------------------------------------------------------
 """Run the agent"""
 if __name__ == '__main__':
@@ -267,7 +298,6 @@ if __name__ == '__main__':
     run(
         agent_config_file=sys.argv[1],
         agent=agent_function,
-        parallel_runs=True,     # Set it to False for debugging.
+        parallel_runs=False,     # Set it to False for debugging.
         run_limit=1000,         # Stop after 1000 runs. Set to 1 for debugging.
     )
-
