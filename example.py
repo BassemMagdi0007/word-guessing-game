@@ -235,7 +235,6 @@ def get_initial_guess(word_length):
     return best_letter
 
 #------------------------------------------------------------------------------------------------------
-# New helper function for Bayesian updating of word probabilities.
 def bayesian_update_probabilities(possible_words, feedback, guesses):
     """
     Update probabilities for each word using Bayes rule.
@@ -264,20 +263,23 @@ def bayesian_update_probabilities(possible_words, feedback, guesses):
         normalized = updated_probs
     return normalized
 #------------------------------------------------------------------------------------------------------
+"""Main agent function"""
 def agent_function(request_data, request_info):
     feedback = request_data['feedback']
     guesses = request_data['guesses']
 
-    # If the word is completely revealed and not yet guessed, return it.
+    # If the word is completely revealed (no dashes) and not yet guessed as a whole word, return it immediately.
     if '-' not in feedback and feedback not in guesses:
         return feedback
 
+    # Initialize word list and set advanced rules flag if it's the first run.
     if not hasattr(agent_function, 'word_list'):
-        agent_function.word_list = all_cities  # initial word list
-        agent_function.advanced_rules = len(feedback) > 12
+        agent_function.word_list = all_cities  # Assuming all_cities is your initial list
+        agent_function.advanced_rules = len(feedback) > 12  # Set advanced rules based on feedback length
         agent_function.previous_feedback = ""
         agent_function.incorrect_words = set()
 
+    # If feedback hasn't changed after a letter guess, filter out incompatible words.
     if agent_function.previous_feedback == feedback and len(guesses) > 0:
         last_guess = guesses[-1]
         if len(last_guess) == 1:
@@ -287,6 +289,7 @@ def agent_function(request_data, request_info):
 
     agent_function.previous_feedback = feedback
 
+    # Filter words based on feedback and previous guesses.
     if agent_function.advanced_rules:
         possible_words = filter_words_advanced(agent_function.word_list, feedback, guesses)
     else:
@@ -294,49 +297,90 @@ def agent_function(request_data, request_info):
 
     possible_words = [word for word in possible_words if word not in agent_function.incorrect_words]
 
+    # If no words match, reset the word list and try again.
     if not possible_words:
         possible_words = [city for city in all_cities if len(city) == len(feedback)]
         possible_words = filter_words(possible_words, feedback, guesses)
 
-    agent_function.word_list = possible_words
+    agent_function.word_list = possible_words  # Update word list after filtering
+    probabilities = update_word_probabilities(possible_words)
 
-    # APPLYing Bayesian updating here:
-    probabilities = bayesian_update_probabilities(possible_words, feedback, guesses)
-
+    # If no letter guesses made yet, use the optimized initial guess.
     if len(guesses) == 0:
         return get_initial_guess(len(feedback))
 
+    # If only a few words remain and we've made at least 3 letter guesses, try guessing the full word.
     if len(possible_words) <= 3 and sum(1 for g in guesses if len(g) == 1) >= 3:
-        word_probabilities = bayesian_update_probabilities(possible_words, feedback, guesses)
+        word_probabilities = update_word_probabilities(possible_words)
         sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
         for word in sorted_words:
             if word not in agent_function.incorrect_words and word not in guesses:
                 return word
 
+    # If exactly one word remains, return it as the full word guess.
     if len(possible_words) == 1:
         word = possible_words[0]
         if word not in guesses:
             return word
 
+    # Fallback: If no valid word is found, return the first letter from the alphabet that hasn't been guessed.
     if not possible_words:
         for letter in 'ANIOERULGSHTMKCBDPYQZVJWFX':
             if letter not in guesses:
                 return letter
 
+    # Otherwise, use information gain on candidate letters to find the best letter to guess.
     candidate_letters = set(letter for word in possible_words for letter in word) - set(guesses)
     if not candidate_letters:
         candidate_letters = set('ANIOERULGSHTMKCBDPYQZVJWFX') - set(guesses)
-
-    candidate_frequencies = {letter: sum(word.count(letter) for word in possible_words)
-                             for letter in candidate_letters}
-
+    
+    # Cache candidate frequencies (compute once per turn)
+    candidate_frequencies = {
+        letter: sum(word.count(letter) for word in possible_words)
+        for letter in candidate_letters
+    }
+    
+    # Otherwise, use information gain on candidate letters to find the best letter to guess.
+    candidate_letters = set(letter for word in possible_words for letter in word) - set(guesses)
+    if not candidate_letters:
+        candidate_letters = set('ANIOERULGSHTMKCBDPYQZVJWFX') - set(guesses)
+    
+    # Cache candidate frequencies (compute once per turn)
+    candidate_frequencies = {
+        letter: sum(word.count(letter) for word in possible_words)
+        for letter in candidate_letters
+    }
+    
+    # Compute positional frequency for candidate letters in unrevealed positions.
     positional_frequencies = {letter: 0 for letter in candidate_letters}
     for word in possible_words:
         for i, letter in enumerate(word):
+            # Only consider positions that are still unrevealed.
             if feedback[i] == '-' and letter in positional_frequencies:
                 positional_frequencies[letter] += 1
+    # Normalize the positional frequencies (avoid division by zero)
     max_pos_freq = max(positional_frequencies.values()) if positional_frequencies else 1
 
+    # Adaptive hyperparameter for positional factor weight.
+    # Initialize if not already set.
+    if not hasattr(agent_function, 'adaptive_pos_weight'):
+        agent_function.adaptive_pos_weight = 1.0
+
+    # Calculate average unrevealed frequency across candidate letters.
+    average_unrevealed = (sum(positional_frequencies.values()) / len(positional_frequencies)
+                          if positional_frequencies else 0)
+
+    # Define threshold values (experiment with these).
+    THRESHOLD_HIGH = 3.0  # Example: high average unrevealed count.
+    THRESHOLD_LOW  = 1.0  # Example: low average unrevealed count.
+
+    # Adjust adaptive weight based on average unrevealed positions.
+    if average_unrevealed > THRESHOLD_HIGH:
+        agent_function.adaptive_pos_weight *= 1.1  # Increase weight if unrevealed positions remain high.
+    elif average_unrevealed < THRESHOLD_LOW:
+        agent_function.adaptive_pos_weight *= 0.9  # Decrease weight if few unrevealed positions.
+
+    # Determine a trend multiplier.
     trend_multiplier = 1.0
     if agent_function.previous_feedback == feedback:
         trend_multiplier = 1.2
@@ -345,11 +389,14 @@ def agent_function(request_data, request_info):
     max_weighted_gain = -1
     for letter, freq in candidate_frequencies.items():
         gain = calculate_information_gain(possible_words, probabilities, letter)
+        # Normalize positional score between 0 and 1.
         pos_factor = positional_frequencies[letter] / max_pos_freq
+        # Multiply the normalized positional factor with the adaptive hyperparameter.
+        combined_pos_factor = (1 + pos_factor * agent_function.adaptive_pos_weight)
         if letter not in feedback:
-            weighted_gain = gain * freq * (1 + pos_factor) * trend_multiplier
+            weighted_gain = gain * freq * combined_pos_factor * trend_multiplier
         else:
-            weighted_gain = gain * freq * (1 + pos_factor)
+            weighted_gain = gain * freq * combined_pos_factor
         if weighted_gain > max_weighted_gain:
             max_weighted_gain = weighted_gain
             best_letter = letter
