@@ -278,6 +278,10 @@ def agent_function(request_data, request_info):
     agent_function.word_list = possible_words  # Update word list after filtering
     probabilities = update_word_probabilities(possible_words)
 
+    # If no letter guesses made yet, use the optimized initial guess.
+    if len(guesses) == 0:
+        return get_initial_guess(len(feedback))
+
     # If only a few words remain and we've made at least 3 letter guesses, try guessing the full word.
     if len(possible_words) <= 3 and sum(1 for g in guesses if len(g) == 1) >= 3:
         word_probabilities = update_word_probabilities(possible_words)
@@ -294,17 +298,19 @@ def agent_function(request_data, request_info):
 
     # Fallback: If no valid word is found, return the first letter from the alphabet that hasn't been guessed.
     if not possible_words:
-        alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-        for letter in alphabet:
+        for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
             if letter not in guesses:
                 return letter
 
-    # Otherwise, use information gain to find the best letter to guess.
+    # Otherwise, use information gain on candidate letters to find the best letter to guess.
+    # Limit candidate letters to those present in the remaining words.
+    candidate_letters = set(letter for word in possible_words for letter in word) - set(guesses)
+    if not candidate_letters:
+        candidate_letters = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ') - set(guesses)
+
     best_letter = None
     max_gain = -1
-    for letter in string.ascii_uppercase:
-        if letter in guesses:
-            continue
+    for letter in candidate_letters:
         gain = calculate_information_gain(possible_words, probabilities, letter)
         if gain > max_gain:
             max_gain = gain
