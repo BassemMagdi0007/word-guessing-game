@@ -298,27 +298,31 @@ def agent_function(request_data, request_info):
 
     # Fallback: If no valid word is found, return the first letter from the alphabet that hasn't been guessed.
     if not possible_words:
-        for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ':
+        for letter in 'ANIOERULGSHTMKCBDPYQZVJWFX':
             if letter not in guesses:
                 return letter
 
     # Otherwise, use information gain on candidate letters to find the best letter to guess.
-    # Limit candidate letters to those present in the remaining words.
     candidate_letters = set(letter for word in possible_words for letter in word) - set(guesses)
     if not candidate_letters:
-        candidate_letters = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ') - set(guesses)
+        candidate_letters = set('ANIOERULGSHTMKCBDPYQZVJWFX') - set(guesses)
+
+    # Cache candidate frequencies (compute once per turn)
+    candidate_frequencies = {
+        letter: sum(word.count(letter) for word in possible_words)
+        for letter in candidate_letters
+    }
 
     best_letter = None
-    max_gain = -1
-    for letter in candidate_letters:
+    max_weighted_gain = -1
+    for letter, freq in candidate_frequencies.items():
         gain = calculate_information_gain(possible_words, probabilities, letter)
-        if gain > max_gain:
-            max_gain = gain
+        weighted_gain = gain * freq
+        if weighted_gain > max_weighted_gain:
+            max_weighted_gain = weighted_gain
             best_letter = letter
 
     return best_letter
-...
-
 #------------------------------------------------------------------------------------------------------
 """Run the agent"""
 if __name__ == '__main__':
