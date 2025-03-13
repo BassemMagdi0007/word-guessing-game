@@ -248,7 +248,7 @@ def agent_function(request_data, request_info):
     # Initialize word list and set advanced rules flag if it's the first run.
     if not hasattr(agent_function, 'word_list'):
         agent_function.word_list = all_cities  # Assuming all_cities is your initial list
-        agent_function.advanced_rules = len(feedback) > 7  # Set advanced rules based on feedback length
+        agent_function.advanced_rules = len(feedback) > 12  # Set advanced rules based on feedback length
         agent_function.previous_feedback = ""
         agent_function.incorrect_words = set()
 
@@ -306,18 +306,51 @@ def agent_function(request_data, request_info):
     candidate_letters = set(letter for word in possible_words for letter in word) - set(guesses)
     if not candidate_letters:
         candidate_letters = set('ANIOERULGSHTMKCBDPYQZVJWFX') - set(guesses)
-
+    
     # Cache candidate frequencies (compute once per turn)
     candidate_frequencies = {
         letter: sum(word.count(letter) for word in possible_words)
         for letter in candidate_letters
     }
+    
+    # Otherwise, use information gain on candidate letters to find the best letter to guess.
+    candidate_letters = set(letter for word in possible_words for letter in word) - set(guesses)
+    if not candidate_letters:
+        candidate_letters = set('ANIOERULGSHTMKCBDPYQZVJWFX') - set(guesses)
+    
+    # Cache candidate frequencies (compute once per turn)
+    candidate_frequencies = {
+        letter: sum(word.count(letter) for word in possible_words)
+        for letter in candidate_letters
+    }
+    
+    # Compute positional frequency for candidate letters in unrevealed positions.
+    positional_frequencies = {letter: 0 for letter in candidate_letters}
+    for word in possible_words:
+        for i, letter in enumerate(word):
+            # Only consider positions that are still unrevealed.
+            if feedback[i] == '-' and letter in positional_frequencies:
+                positional_frequencies[letter] += 1
+    # Normalize the positional frequencies (avoid division by zero)
+    max_pos_freq = max(positional_frequencies.values()) if positional_frequencies else 1
+
+    # Determine a trend multiplier.
+    trend_multiplier = 1.0
+    if agent_function.previous_feedback == feedback:
+        trend_multiplier = 1.2
 
     best_letter = None
     max_weighted_gain = -1
     for letter, freq in candidate_frequencies.items():
         gain = calculate_information_gain(possible_words, probabilities, letter)
-        weighted_gain = gain * freq
+        # Normalize positional score between 0 and 1.
+        pos_factor = positional_frequencies[letter] / max_pos_freq
+        # Combine info gain, overall frequency, and positional frequency.
+        # The positional component acts as an extra boost.
+        if letter not in feedback:
+            weighted_gain = gain * freq * (1 + pos_factor) * trend_multiplier
+        else:
+            weighted_gain = gain * freq * (1 + pos_factor)
         if weighted_gain > max_weighted_gain:
             max_weighted_gain = weighted_gain
             best_letter = letter
