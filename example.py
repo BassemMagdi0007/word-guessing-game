@@ -5,6 +5,7 @@ import pandas as pd
 import string
 import math
 from collections import defaultdict
+from collections import Counter
 #------------------------------------------------------------------------------------------------------
 """Data preprocessing"""
 # Load the pre-filtered city data
@@ -20,6 +21,53 @@ all_cities = tanzanian_cities + non_tanzanian_cities
 
 # Cache for initial guesses based on word length
 initial_guess_cache = {}
+
+
+#------------------------------------------------------------------------------------------------------
+"""Precompute letter frequencies for each word length"""
+# Precompute letter frequencies for each word length
+def precompute_letter_frequencies():
+    letter_frequencies = defaultdict(Counter)
+    for city in all_cities:
+        word_length = len(city)
+        for letter in city:
+            letter_frequencies[word_length][letter] += 1
+    return letter_frequencies
+
+letter_frequencies = precompute_letter_frequencies()
+#------------------------------------------------------------------------------------------------------
+"""After filtering out incompatible words, if one word has much higher probability, guess it."""
+def get_best_word_guess(possible_words, probabilities, guesses):
+    if len(possible_words) == 1:
+        return possible_words[0]  # If only one word remains, guess it
+    
+    sorted_words = sorted(zip(probabilities, possible_words), reverse=True)
+    highest_prob_word = sorted_words[0][1]
+    
+    if sorted_words[0][0] > sorted_words[1][0] * 1.5:  # Arbitrary threshold for "significantly higher"
+        return highest_prob_word
+    
+    return None
+#------------------------------------------------------------------------------------------------------
+"""Determine the best letter to guess based on frequency analysis and prior guesses."""
+def get_best_letter(word_length, guesses):
+    freq_data = letter_frequencies[word_length]
+    vowels = set("AEIOU")
+    best_letter = None
+    max_frequency = -1
+
+    for vowel in vowels:
+        if vowel not in guesses and freq_data[vowel] > max_frequency:
+            best_letter = vowel
+            max_frequency = freq_data[vowel]
+    
+    if not best_letter:
+        for letter, freq in freq_data.items():
+            if letter not in guesses and freq > max_frequency:
+                best_letter = letter
+                max_frequency = freq
+    
+    return best_letter
 #------------------------------------------------------------------------------------------------------
 """Simulate the biased selection (50% Tanzania, 50% other)"""
 def get_weighted_cities():
@@ -75,36 +123,19 @@ def is_compatible(word, feedback):
 """Filter the word list based on feedback and previous guesses."""
 def filter_words(word_list, feedback, guesses):
     filtered_list = []
-    
     for word in word_list:
         if len(word) != len(feedback):
             continue
-        
         is_match = True
         for i, (char, feedback_char) in enumerate(zip(word, feedback)):
-            # If the feedback shows a letter at this position
-            if feedback_char != '-':
-                if char != feedback_char:
-                    is_match = False
-                    break
-                
-            # If the feedback shows a dash at this position
-            else:
-                # If we've guessed this letter before and it's not revealed here
-                if char in guesses and char != feedback_char:
-                    is_match = False
-                    break
-        
-        # Check if the word contains any letters that were guessed but not revealed
-        for guess in guesses:
-            if len(guess) == 1:  # It's a letter guess
-                if guess in word and guess not in feedback:
-                    is_match = False
-                    break
-        
+            if feedback_char != '-' and char != feedback_char:
+                is_match = False
+                break
+            elif feedback_char == '-' and char in guesses:
+                is_match = False
+                break
         if is_match:
             filtered_list.append(word)
-    
     return filtered_list
 
 #------------------------------------------------------------------------------------------------------
@@ -165,19 +196,14 @@ def filter_words_advanced(word_list, feedback, guesses):
 def update_word_probabilities(word_list):
     if not word_list:
         return []
-        
     probabilities = []
-    
     tz_cities = [city for city in word_list if city in tanzanian_cities]
     non_tz_cities = [city for city in word_list if city in non_tanzanian_cities]
     
-    # Calculate probabilities
     for word in word_list:
         if word in tanzanian_cities:
-            # 50% chance of being a Tanzanian city
             prob = 0.5 / len(tz_cities) if len(tz_cities) > 0 else 0
         else:
-            # 50% chance of being a non-Tanzanian city
             prob = 0.5 / len(non_tz_cities) if len(non_tz_cities) > 0 else 0
         probabilities.append(prob)
     
@@ -210,77 +236,70 @@ def get_initial_guess(word_length):
 
 #------------------------------------------------------------------------------------------------------
 """Main agent function"""
+...
 def agent_function(request_data, request_info):
     feedback = request_data['feedback']
     guesses = request_data['guesses']
-    
-    # print(f"Current feedback: {feedback}")
-    # print(f"Previous guesses: {guesses}")
-    # print("--------------------------------------------------")
-    
-    # If the word is completely revealed (no dashes) and not yet guessed as a whole word
+
+    # If the word is completely revealed (no dashes) and not yet guessed as a whole word, return it immediately.
     if '-' not in feedback and feedback not in guesses:
         return feedback
-    
-    # Initialize the word list and previous feedback if this is the first guess
+
+    # Initialize word list and set advanced rules flag if it's the first run.
     if not hasattr(agent_function, 'word_list'):
-        agent_function.word_list = all_cities
-        agent_function.advanced_rules = len(feedback) > 7  # Guess if advanced rules are used
+        agent_function.word_list = all_cities  # Assuming all_cities is your initial list
+        agent_function.advanced_rules = len(feedback) > 7  # Set advanced rules based on feedback length
         agent_function.previous_feedback = ""
-        agent_function.incorrect_words = set()  # Track incorrect word guesses
-    
-    # If the feedback hasn't changed after a letter guess, that letter is not in the word
+        agent_function.incorrect_words = set()
+
+    # If feedback hasn't changed after a letter guess, filter out incompatible words.
     if agent_function.previous_feedback == feedback and len(guesses) > 0:
         last_guess = guesses[-1]
-        if len(last_guess) == 1:  # It's a letter guess
-            # Further filter words that contain this letter
+        if len(last_guess) == 1:
             agent_function.word_list = [word for word in agent_function.word_list if last_guess not in word]
         elif last_guess not in agent_function.incorrect_words:
-            # If a word guess was incorrect, add it to our set of incorrect word guesses
             agent_function.incorrect_words.add(last_guess)
-    
-    # Update previous feedback
+
     agent_function.previous_feedback = feedback
-    
-    # Determine if we're using standard or advanced rules
+
+    # Filter words based on feedback and previous guesses.
     if agent_function.advanced_rules:
         possible_words = filter_words_advanced(agent_function.word_list, feedback, guesses)
     else:
         possible_words = filter_words(agent_function.word_list, feedback, guesses)
-    
-    # Filter out words that we've already guessed and were incorrect
+
     possible_words = [word for word in possible_words if word not in agent_function.incorrect_words]
-    
-    # If no words match the criteria, reset the word list and try again
+
+    # If no words match, reset the word list and try again.
     if not possible_words:
-        # Reset the word list to all cities that match the current feedback pattern
-        if agent_function.advanced_rules:
-            possible_words = [city for city in all_cities if len(city) <= len(feedback)]
-        else:
-            possible_words = [city for city in all_cities if len(city) == len(feedback)]
-        
-        # Further filter using the current feedback
-        possible_words = [word for word in possible_words if is_compatible(word, feedback)]
-        # Remove any words we've already tried
-        possible_words = [word for word in possible_words if word not in agent_function.incorrect_words]
-    
-    agent_function.word_list = possible_words
-    
-    # Calculate probabilities for possible_words
+        possible_words = [city for city in all_cities if len(city) == len(feedback)]
+        possible_words = filter_words(possible_words, feedback, guesses)
+
+    agent_function.word_list = possible_words  # Update word list after filtering
     probabilities = update_word_probabilities(possible_words)
-    
-    # If few words remain AND we've made at least 3 letter guesses, we can guess the word
+
+    # If only a few words remain and we've made at least 3 letter guesses, try guessing the full word.
     if len(possible_words) <= 3 and sum(1 for g in guesses if len(g) == 1) >= 3:
-        # Sort by probability if using Tanzanian bias
         word_probabilities = update_word_probabilities(possible_words)
-        if word_probabilities:
-            sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
-            # Return the most likely word that hasn't been guessed yet
-            for word in sorted_words:
-                if word not in agent_function.incorrect_words and word not in guesses:
-                    return word
-    
-    # Otherwise, find the best letter to guess
+        sorted_words = [w for _, w in sorted(zip(word_probabilities, possible_words), reverse=True)]
+        for word in sorted_words:
+            if word not in agent_function.incorrect_words and word not in guesses:
+                return word
+
+    # If exactly one word remains, return it as the full word guess.
+    if len(possible_words) == 1:
+        word = possible_words[0]
+        if word not in guesses:
+            return word
+
+    # Fallback: If no valid word is found, return the first letter from the alphabet that hasn't been guessed.
+    if not possible_words:
+        alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        for letter in alphabet:
+            if letter not in guesses:
+                return letter
+
+    # Otherwise, use information gain to find the best letter to guess.
     best_letter = None
     max_gain = -1
     for letter in string.ascii_uppercase:
@@ -290,8 +309,9 @@ def agent_function(request_data, request_info):
         if gain > max_gain:
             max_gain = gain
             best_letter = letter
-    
+
     return best_letter
+...
 
 #------------------------------------------------------------------------------------------------------
 """Run the agent"""
