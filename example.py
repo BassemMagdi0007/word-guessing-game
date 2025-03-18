@@ -20,30 +20,67 @@ all_cities = tanzanian_cities + non_tanzanian_cities
 
 #------------------------------------------------------------------------------------------------------
 """Calculate the information gain from guessing a letter."""
-def calculate_information_gain(possible_words, probabilities, letter):
+def calculate_information_gain(possible_words, probabilities, letter, advanced_rules=False):
     if len(possible_words) == 0:
         return 0
 
     # Current entropy (using actual probabilities)
     current_entropy = -sum(p * math.log2(p) for p in probabilities if p > 0)
 
-    # Group words by their pattern and track their probabilities
-    pattern_probs = defaultdict(float)
-    pattern_words = defaultdict(list)
-    for word, prob in zip(possible_words, probabilities):
-        pattern = "".join([letter if char == letter else '-' for char in word])
-        pattern_probs[pattern] += prob
-        pattern_words[pattern].append((word, prob))
+    # Handle standard rules
+    if not advanced_rules:
+        # Group words by their pattern and track their probabilities
+        pattern_probs = defaultdict(float)
+        pattern_words = defaultdict(list)
+        for word, prob in zip(possible_words, probabilities):
+            pattern = "".join([letter if char == letter else '-' for char in word])
+            pattern_probs[pattern] += prob
+            pattern_words[pattern].append((word, prob))
 
-    # Calculate expected entropy after guessing the letter
-    expected_entropy = 0
-    for pattern, total_prob in pattern_probs.items():
-        if total_prob == 0:
-            continue
-        # Calculate entropy for this pattern
-        conditional_probs = [prob / total_prob for (_, prob) in pattern_words[pattern]]
-        entropy = -sum(p * math.log2(p) for p in conditional_probs if p > 0)
-        expected_entropy += total_prob * entropy
+        # Calculate expected entropy after guessing the letter
+        expected_entropy = 0
+        for pattern, total_prob in pattern_probs.items():
+            if total_prob == 0:
+                continue
+            # Calculate entropy for this pattern
+            conditional_probs = [prob / total_prob for (_, prob) in pattern_words[pattern]]
+            entropy = -sum(p * math.log2(p) for p in conditional_probs if p > 0)
+            expected_entropy += total_prob * entropy
+
+    # Handle advanced rules
+    else:
+        # Group words by possible outcomes of guessing this letter
+        # In advanced rules, only one occurrence is revealed at a time (if any)
+        outcome_probs = defaultdict(float)
+        outcome_words = defaultdict(list)
+        
+        for word, prob in zip(possible_words, probabilities):
+            # Count occurrences of letter in the word
+            occurrences = [(i, char) for i, char in enumerate(word) if char == letter]
+            
+            if not occurrences:
+                # Letter doesn't occur
+                outcome = "none"
+                outcome_probs[outcome] += prob
+                outcome_words[outcome].append((word, prob))
+            else:
+                # Letter occurs once or more
+                # In advanced rules, each position is equally likely to be revealed
+                for pos, _ in occurrences:
+                    outcome = f"pos_{pos}"
+                    # Divide probability by number of occurrences since any could be revealed
+                    outcome_probs[outcome] += prob / len(occurrences)
+                    outcome_words[outcome].append((word, prob / len(occurrences)))
+        
+        # Calculate expected entropy after guessing the letter
+        expected_entropy = 0
+        for outcome, total_prob in outcome_probs.items():
+            if total_prob == 0:
+                continue
+            # Calculate entropy for this outcome
+            conditional_probs = [prob / total_prob for (_, prob) in outcome_words[outcome]]
+            entropy = -sum(p * math.log2(p) for p in conditional_probs if p > 0)
+            expected_entropy += total_prob * entropy
 
     return current_entropy - expected_entropy
 #------------------------------------------------------------------------------------------------------
@@ -88,10 +125,55 @@ def filter_words(word_list, feedback, guesses):
 #------------------------------------------------------------------------------------------------------
 """Filter the word list based on feedback and previous guesses for advanced rules."""
 def filter_words_advanced(word_list, feedback, guesses):
-
-    # Apply logic here
+    filtered_list = []
+    letter_guesses = [g for g in guesses if len(g) == 1]
     
-    return
+    # In advanced rules, the actual word length is unknown and could be shorter than the feedback
+    # We need to consider all possible word lengths up to the feedback length
+    max_possible_length = len(feedback)
+    
+    for word in word_list:
+        # Skip words longer than the feedback
+        if len(word) > max_possible_length:
+            continue
+            
+        is_match = True
+        
+        # Check if the word is compatible with revealed positions
+        for i in range(len(word)):
+            if i < len(feedback) and feedback[i] != '-' and word[i] != feedback[i]:
+                is_match = False
+                break
+        
+        if not is_match:
+            continue
+        
+        # For each guessed letter that appears in the word
+        for letter in letter_guesses:
+            # Count occurrences in the word
+            word_occurrences = word.count(letter)
+            
+            # Count revealed occurrences in the feedback
+            feedback_occurrences = feedback.count(letter)
+            
+            # If we've guessed this letter but not all occurrences are revealed yet
+            if letter in word and letter in guesses:
+                # The number of revealed occurrences should be less than or equal to 
+                # the actual occurrences in the word
+                if feedback_occurrences > word_occurrences:
+                    is_match = False
+                    break
+            
+            # If we've guessed this letter but it doesn't appear in the feedback at all
+            # the word shouldn't contain this letter
+            if letter in guesses and letter not in feedback and letter in word:
+                is_match = False
+                break
+                
+        if is_match:
+            filtered_list.append(word)
+            
+    return filtered_list
 #------------------------------------------------------------------------------------------------------
 """Update word probabilities based on the Tanzanian bias."""
 def update_word_probabilities(word_list):
@@ -111,13 +193,42 @@ def update_word_probabilities(word_list):
     return probabilities
 #------------------------------------------------------------------------------------------------------
 """Select the best letter to guess based on information gain and positional value."""
-def select_best_letter(possible_words, probabilities, feedback, guesses):
+def select_best_letter(possible_words, probabilities, feedback, guesses, advanced_rules=False):
     # Get all unique letters from possible words that haven't been guessed yet
-    candidate_letters = set(letter for word in possible_words for letter in word) - set(guesses)
+    candidate_letters = set(letter for word in possible_words for letter in word)
     
-    # If no candidate letters are found, fall back to the entire alphabet (excluding guessed letters)
+    if advanced_rules:
+        # In advanced rules, we might want to guess a letter again if it might have more occurrences
+        guessed_letters = [g for g in guesses if len(g) == 1]
+        
+        # Calculate expected occurrences of each letter
+        expected_occurrences = {}
+        for letter in set("".join(possible_words)):
+            expected_occurrences[letter] = sum(word.count(letter) * prob for word, prob in zip(possible_words, probabilities))
+        
+        # For already guessed letters, only keep them as candidates if likely more occurrences exist
+        for letter in guessed_letters:
+            revealed_count = feedback.count(letter)
+            if letter in expected_occurrences and expected_occurrences[letter] > revealed_count + 0.5:
+                # Keep this letter as a candidate
+                pass
+            else:
+                # Remove this letter from candidates
+                if letter in candidate_letters:
+                    candidate_letters.remove(letter)
+    else:
+        # In standard rules, remove all previously guessed letters
+        candidate_letters -= set(guesses)
+    
+    # If no candidate letters are found, fall back to the entire alphabet (excluding fully revealed letters)
     if not candidate_letters:
-        candidate_letters = set(string.ascii_uppercase) - set(guesses)
+        if advanced_rules:
+            # In advanced rules, fully excluded letters are those that don't appear in feedback
+            # when we've guessed them
+            excluded_letters = {g for g in guesses if len(g) == 1 and g not in feedback}
+            candidate_letters = set(string.ascii_uppercase) - excluded_letters
+        else:
+            candidate_letters = set(string.ascii_uppercase) - set(guesses)
     
     # If still no candidates, return None (this should not happen, but it's a safeguard)
     if not candidate_letters:
@@ -126,7 +237,7 @@ def select_best_letter(possible_words, probabilities, feedback, guesses):
     # Calculate pure information gain for each candidate letter
     info_gains = {}
     for letter in candidate_letters:
-        info_gains[letter] = calculate_information_gain(possible_words, probabilities, letter)
+        info_gains[letter] = calculate_information_gain(possible_words, probabilities, letter, advanced_rules)
     
     # Calculate positional value (how well a letter discriminates at specific positions)
     positional_values = {}
@@ -168,6 +279,17 @@ def select_best_letter(possible_words, probabilities, feedback, guesses):
         letter_scores[letter] = (info_gain_weight * norm_gain + 
                                positional_weight * norm_pos)
     
+    # Prioritize letters with high expected occurrences in advanced rules
+    if advanced_rules:
+        expected_letter_counts = {}
+        for letter in candidate_letters:
+            expected_letter_counts[letter] = sum(word.count(letter) * prob for word, prob in zip(possible_words, probabilities))
+            
+        for letter in letter_scores:
+            if letter in expected_letter_counts:
+                # Boost score for letters with many expected occurrences
+                letter_scores[letter] *= (1 + 0.2 * min(expected_letter_counts[letter], 3))
+    
     # Select the letter with the highest score
     if letter_scores:
         best_letter = max(letter_scores.items(), key=lambda x: x[1])[0]
@@ -182,24 +304,62 @@ def agent_function(request_data, request_info):
     feedback = request_data['feedback']
     guesses = request_data['guesses']
 
-    # Initialize word list and set advanced rules flag if it's the first run.
+    # Initialize state variables if first run
     if not hasattr(agent_function, 'word_list'):
-        agent_function.word_list = all_cities  # Assuming all_cities is your initial list
+        agent_function.word_list = all_cities
         agent_function.incorrect_words = set()
+        agent_function.advanced_rules = None
+        agent_function.letter_counts = defaultdict(int)  # Track guessed letters and their appearances
+
+    # Detect if we're using advanced rules by checking if the same letter appears multiple times in guesses
+    if agent_function.advanced_rules is None:
+        letter_guesses = [g for g in guesses if len(g) == 1]
+        duplicate_letters = len(letter_guesses) != len(set(letter_guesses))
+        # Also check if a letter appears in guesses but not all occurrences are revealed
+        letter_mismatch = False
+        for letter in letter_guesses:
+            if letter in feedback:
+                for word in agent_function.word_list:
+                    if word.count(letter) > feedback.count(letter):
+                        letter_mismatch = True
+                        break
+        agent_function.advanced_rules = duplicate_letters or letter_mismatch
 
     # Filter possible words based on feedback and guesses
-    possible_words = filter_words(agent_function.word_list, feedback, guesses)
+    if agent_function.advanced_rules:
+        possible_words = filter_words_advanced(agent_function.word_list, feedback, guesses)
+    else:
+        possible_words = filter_words(agent_function.word_list, feedback, guesses)
+    
     possible_words = [word for word in possible_words 
                       if word not in agent_function.incorrect_words]
 
     # Fallback if filtering eliminates all words
     if not possible_words:
-        possible_words = [city for city in all_cities if len(city) == len(feedback)]
-        possible_words = filter_words(possible_words, feedback, guesses)
+        if agent_function.advanced_rules:
+            possible_words = [city for city in all_cities if len(city) <= len(feedback)]
+            possible_words = filter_words_advanced(possible_words, feedback, guesses)
+        else:
+            possible_words = [city for city in all_cities if len(city) == len(feedback)]
+            possible_words = filter_words(possible_words, feedback, guesses)
 
     # Update word list and probabilities
     agent_function.word_list = possible_words
     probabilities = update_word_probabilities(possible_words)
+
+    # For advanced rules, check if we need to repeat a letter guess
+    if agent_function.advanced_rules:
+        # Calculate expected number of occurrences for each guessed letter
+        expected_occurrences = {}
+        for letter in set(l for l in string.ascii_uppercase if l in "".join(possible_words)):
+            expected_occurrences[letter] = sum(word.count(letter) * prob for word, prob in zip(possible_words, probabilities))
+        
+        # Check if any previously guessed letter likely has more unrevealed occurrences
+        for letter in [g for g in guesses if len(g) == 1]:
+            revealed_count = feedback.count(letter)
+            if letter in expected_occurrences and expected_occurrences[letter] > revealed_count + 0.5:
+                # There's likely more occurrences to be found
+                return letter
 
     # Early word guessing conditions
     if (len(possible_words) <= 3 and sum(1 for g in guesses if len(g) == 1) >= 2) \
@@ -220,7 +380,7 @@ def agent_function(request_data, request_info):
     if best_letter:
         return best_letter
 
-    # Final fallback: return the first unguessed letter from the alphabet
+    # Final fallback: return common letters in English
     for letter in 'ANIOERULGSHTMKCBDPYQZVJWFX':
         if letter not in guesses:
             return letter
