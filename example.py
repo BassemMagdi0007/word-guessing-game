@@ -310,6 +310,8 @@ def agent_function(request_data, request_info):
         agent_function.incorrect_words = set()
         agent_function.advanced_rules = None
         agent_function.letter_counts = defaultdict(int)  # Track guessed letters and their appearances
+        agent_function.letter_feedback_history = {}  # Track feedback after each letter guess
+        agent_function.consecutive_repeats = defaultdict(int)  # Track consecutive repeats of a letter
 
     # Detect if we're using advanced rules by checking if the same letter appears multiple times in guesses
     if agent_function.advanced_rules is None:
@@ -324,6 +326,23 @@ def agent_function(request_data, request_info):
                         letter_mismatch = True
                         break
         agent_function.advanced_rules = duplicate_letters or letter_mismatch
+
+    # Track feedback history for each letter to detect when a letter stops revealing new positions
+    if len(guesses) > 0 and len(guesses[-1]) == 1:
+        last_letter = guesses[-1]
+        
+        # Store the feedback after this letter guess
+        if last_letter not in agent_function.letter_feedback_history:
+            agent_function.letter_feedback_history[last_letter] = []
+        agent_function.letter_feedback_history[last_letter].append(feedback)
+        
+        # Check if feedback changed since the last guess of this letter
+        if len(agent_function.letter_feedback_history[last_letter]) >= 2:
+            if agent_function.letter_feedback_history[last_letter][-1] == agent_function.letter_feedback_history[last_letter][-2]:
+                agent_function.consecutive_repeats[last_letter] += 1
+            else:
+                # Reset counter if we found a new position
+                agent_function.consecutive_repeats[last_letter] = 0
 
     # Filter possible words based on feedback and guesses
     if agent_function.advanced_rules:
@@ -357,7 +376,16 @@ def agent_function(request_data, request_info):
         # Check if any previously guessed letter likely has more unrevealed occurrences
         for letter in [g for g in guesses if len(g) == 1]:
             revealed_count = feedback.count(letter)
-            if letter in expected_occurrences and expected_occurrences[letter] > revealed_count + 0.5:
+            
+            # Only consider repeating a letter if:
+            # 1. Expected occurrences is significantly higher than revealed count
+            # 2. The letter hasn't been repeated too many times without changes
+            # 3. For some letters, we may need to try up to 3 times to be sure
+            max_allowed_repeats = 2  # Maximum consecutive unchanged repeats
+            
+            if (letter in expected_occurrences and 
+                expected_occurrences[letter] > revealed_count + 0.5 and
+                agent_function.consecutive_repeats[letter] <= max_allowed_repeats):
                 # There's likely more occurrences to be found
                 return letter
 
@@ -376,13 +404,13 @@ def agent_function(request_data, request_info):
             return word
 
     # Select best letter using optimized scoring
-    best_letter = select_best_letter(possible_words, probabilities, feedback, guesses)
+    best_letter = select_best_letter(possible_words, probabilities, feedback, guesses, agent_function.advanced_rules)
     if best_letter:
         return best_letter
 
     # Final fallback: return common letters in English
     for letter in 'ANIOERULGSHTMKCBDPYQZVJWFX':
-        if letter not in guesses:
+        if letter not in guesses or (agent_function.advanced_rules and agent_function.consecutive_repeats.get(letter, 0) <= 2):
             return letter
 
     # Final fallback (should never reach here)
