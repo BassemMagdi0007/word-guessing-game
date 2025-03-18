@@ -88,48 +88,10 @@ def filter_words(word_list, feedback, guesses):
 #------------------------------------------------------------------------------------------------------
 """Filter the word list based on feedback and previous guesses for advanced rules."""
 def filter_words_advanced(word_list, feedback, guesses):
-    filtered_list = []
+
+    # Apply logic here
     
-    # Determine the actual feedback length (ignoring extra '-' added for disguise)
-    actual_feedback_length = len(feedback.rstrip('-'))
-    
-    for word in word_list:
-        # Check if the word matches the actual feedback length
-        if len(word) != actual_feedback_length:
-            continue
-        
-        is_match = True
-        
-        # Check if revealed positions match
-        for i, feedback_char in enumerate(feedback):
-            if i >= len(word):  # Stop if feedback exceeds word length
-                break
-            if feedback_char != '-' and word[i] != feedback_char:
-                is_match = False
-                break
-        
-        # Check if the word contains guessed letters that aren't in the feedback
-        for guess in guesses:
-            if len(guess) == 1:  # It's a letter guess
-                # If the letter is in the word but not in the feedback at all
-                if guess in word and guess not in feedback:
-                    is_match = False
-                    break
-        
-        # Check if unrevealed positions have letters that should be revealed
-        for i, char in enumerate(word):
-            if i >= len(feedback):  # Stop if word exceeds feedback length
-                break
-            if feedback[i] == '-' and char in feedback:
-                # If this letter appears in the feedback but not at this position,
-                # this word doesn't match the pattern
-                is_match = False
-                break
-        
-        if is_match:
-            filtered_list.append(word)
-    
-    return filtered_list
+    return
 #------------------------------------------------------------------------------------------------------
 """Update word probabilities based on the Tanzanian bias."""
 def update_word_probabilities(word_list):
@@ -219,61 +181,16 @@ def select_best_letter(possible_words, probabilities, feedback, guesses):
 def agent_function(request_data, request_info):
     feedback = request_data['feedback']
     guesses = request_data['guesses']
-    # print("Feedback:", feedback)
-    # print("Guesses:", guesses)
 
     # Initialize word list and set advanced rules flag if it's the first run.
     if not hasattr(agent_function, 'word_list'):
         agent_function.word_list = all_cities  # Assuming all_cities is your initial list
-        agent_function.advanced_rules = len(feedback) > 12  # Set advanced rules based on feedback length
-        agent_function.previous_feedback = ""
         agent_function.incorrect_words = set()
 
-    # If the word is fully revealed, return it
-    if agent_function.advanced_rules:
-        # Advanced environment: ignore extra '-' characters
-        actual_feedback = feedback.rstrip('-')
-        if '-' not in actual_feedback and actual_feedback not in guesses:
-            # print("Returning fully revealed word (advanced):", actual_feedback)
-            return actual_feedback
-    else:
-        # Simple environment: feedback length matches word length
-        if '-' not in feedback and feedback not in guesses:
-            # print("Returning fully revealed word (simple):", feedback)
-            return feedback
-
-    # Handle feedback changes from last guess
-    if len(guesses) > 0:
-        last_guess = guesses[-1]
-        if len(last_guess) == 1:  # Letter guess
-            if agent_function.previous_feedback == feedback:
-                # Letter not in word
-                agent_function.word_list = [word for word in agent_function.word_list 
-                                          if last_guess not in word]
-            else:
-                # Letter is in word - filter positions
-                new_word_list = []
-                for word in agent_function.word_list:
-                    if last_guess in word:
-                        match = True
-                        for i, (char, fb_char) in enumerate(zip(word, feedback)):
-                            if fb_char != '-' and char != fb_char:
-                                match = False
-                                break
-                        if match:
-                            new_word_list.append(word)
-                agent_function.word_list = new_word_list
-        else:  # Word guess
-            if last_guess not in agent_function.incorrect_words:
-                agent_function.incorrect_words.add(last_guess)
-
-    # Filter words based on current state
-    if agent_function.advanced_rules:
-        possible_words = filter_words_advanced(agent_function.word_list, feedback, guesses)
-    else:
-        possible_words = filter_words(agent_function.word_list, feedback, guesses)
+    # Filter possible words based on feedback and guesses
+    possible_words = filter_words(agent_function.word_list, feedback, guesses)
     possible_words = [word for word in possible_words 
-                     if word not in agent_function.incorrect_words]
+                      if word not in agent_function.incorrect_words]
 
     # Fallback if filtering eliminates all words
     if not possible_words:
@@ -290,41 +207,25 @@ def agent_function(request_data, request_info):
         word_prob_pairs = sorted(zip(probabilities, possible_words), reverse=True)
         for prob, word in word_prob_pairs:
             if word not in agent_function.incorrect_words and word not in guesses:
-                # For simple environment, ensure the word matches the feedback length
-                if not agent_function.advanced_rules and len(word) != len(feedback):
-                    continue
-                # print("Returning word guess:", word)
                 return word
 
     # Single word remaining
-    # print("Possible words:", possible_words)
     if len(possible_words) == 1:
         word = possible_words[0]
         if word not in guesses:
-            # print("Returning single remaining word:", word)
             return word
-
-    # Fallback letter selection
-    if not possible_words:
-        for letter in 'ANIOERULGSHTMKCBDPYQZVJWFX':
-            if letter not in guesses:
-                print("Returning fallback letter:", letter)
-                return letter
 
     # Select best letter using optimized scoring
     best_letter = select_best_letter(possible_words, probabilities, feedback, guesses)
     if best_letter:
-        # print("Returning best letter:", best_letter)
         return best_letter
-    else:
-        # Fallback: return the first unguessed letter from the alphabet
-        for letter in 'ANIOERULGSHTMKCBDPYQZVJWFX':
-            if letter not in guesses:
-                print("Returning fallback letter:", letter)
-                return letter
+
+    # Final fallback: return the first unguessed letter from the alphabet
+    for letter in 'ANIOERULGSHTMKCBDPYQZVJWFX':
+        if letter not in guesses:
+            return letter
 
     # Final fallback (should never reach here)
-    print("Returning default fallback letter: A")
     return "A"
 
 #------------------------------------------------------------------------------------------------------
