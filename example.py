@@ -20,9 +20,13 @@ all_cities = tanzanian_cities + non_tanzanian_cities
 
 #------------------------------------------------------------------------------------------------------
 """Calculate the information gain from guessing a letter."""
-def calculate_information_gain(possible_words, probabilities, letter, advanced_rules=False):
+def calculate_information_gain(possible_words, probabilities, letter, advanced_rules=False, exhausted_letters=None):
     if len(possible_words) == 0:
         return 0
+        
+    # If this letter has been guessed multiple times with no change in feedback
+    if advanced_rules and exhausted_letters and letter in exhausted_letters:
+        return 0  # No information gain for exhausted letters
 
     # Current entropy (using actual probabilities)
     current_entropy = -sum(p * math.log2(p) for p in probabilities if p > 0)
@@ -193,7 +197,7 @@ def update_word_probabilities(word_list):
     return probabilities
 #------------------------------------------------------------------------------------------------------
 """Select the best letter to guess based on information gain and positional value."""
-def select_best_letter(possible_words, probabilities, feedback, guesses, advanced_rules=False):
+def select_best_letter(possible_words, probabilities, feedback, guesses, advanced_rules=False, exhausted_letters=None):
     # Get all unique letters from possible words that haven't been guessed yet
     candidate_letters = set(letter for word in possible_words for letter in word)
     
@@ -209,6 +213,13 @@ def select_best_letter(possible_words, probabilities, feedback, guesses, advance
         # For already guessed letters, only keep them as candidates if likely more occurrences exist
         for letter in guessed_letters:
             revealed_count = feedback.count(letter)
+            
+            # Never consider letters that have been guessed twice with no change in feedback
+            if exhausted_letters and letter in exhausted_letters:
+                if letter in candidate_letters:
+                    candidate_letters.remove(letter)
+                continue
+                
             if letter in expected_occurrences and expected_occurrences[letter] > revealed_count + 0.5:
                 # Keep this letter as a candidate
                 pass
@@ -224,8 +235,10 @@ def select_best_letter(possible_words, probabilities, feedback, guesses, advance
     if not candidate_letters:
         if advanced_rules:
             # In advanced rules, fully excluded letters are those that don't appear in feedback
-            # when we've guessed them
+            # when we've guessed them, or letters that have been guessed twice with no change
             excluded_letters = {g for g in guesses if len(g) == 1 and g not in feedback}
+            if exhausted_letters:
+                excluded_letters.update(exhausted_letters)
             candidate_letters = set(string.ascii_uppercase) - excluded_letters
         else:
             candidate_letters = set(string.ascii_uppercase) - set(guesses)
@@ -237,7 +250,7 @@ def select_best_letter(possible_words, probabilities, feedback, guesses, advance
     # Calculate pure information gain for each candidate letter
     info_gains = {}
     for letter in candidate_letters:
-        info_gains[letter] = calculate_information_gain(possible_words, probabilities, letter, advanced_rules)
+        info_gains[letter] = calculate_information_gain(possible_words, probabilities, letter, advanced_rules, exhausted_letters)
     
     # Calculate positional value (how well a letter discriminates at specific positions)
     positional_values = {}
@@ -290,6 +303,11 @@ def select_best_letter(possible_words, probabilities, feedback, guesses, advance
                 # Boost score for letters with many expected occurrences
                 letter_scores[letter] *= (1 + 0.2 * min(expected_letter_counts[letter], 3))
     
+    # Apply a strong penalty to letters that have been consecutively repeated with no change
+    for letter in letter_scores:
+        if letter in agent_function.consecutive_repeats and agent_function.consecutive_repeats[letter] > 0:
+            letter_scores[letter] *= 0.1  # Apply a 90% penalty
+    
     # Select the letter with the highest score
     if letter_scores:
         best_letter = max(letter_scores.items(), key=lambda x: x[1])[0]
@@ -312,6 +330,7 @@ def agent_function(request_data, request_info):
         agent_function.letter_counts = defaultdict(int)  # Track guessed letters and their appearances
         agent_function.letter_feedback_history = {}  # Track feedback after each letter guess
         agent_function.consecutive_repeats = defaultdict(int)  # Track consecutive repeats of a letter
+        agent_function.exhausted_letters = set()  # Track letters that have been guessed twice with no change in feedback
 
     # Detect if we're using advanced rules by checking if the same letter appears multiple times in guesses
     if agent_function.advanced_rules is None:
@@ -340,6 +359,8 @@ def agent_function(request_data, request_info):
         if len(agent_function.letter_feedback_history[last_letter]) >= 2:
             if agent_function.letter_feedback_history[last_letter][-1] == agent_function.letter_feedback_history[last_letter][-2]:
                 agent_function.consecutive_repeats[last_letter] += 1
+                # Immediately mark letter as exhausted if guessed with no change
+                agent_function.exhausted_letters.add(last_letter)
             else:
                 # Reset counter if we found a new position
                 agent_function.consecutive_repeats[last_letter] = 0
@@ -375,17 +396,18 @@ def agent_function(request_data, request_info):
         
         # Check if any previously guessed letter likely has more unrevealed occurrences
         for letter in [g for g in guesses if len(g) == 1]:
+            # Never repeat exhausted letters
+            if letter in agent_function.exhausted_letters:
+                continue
+                
             revealed_count = feedback.count(letter)
             
             # Only consider repeating a letter if:
             # 1. Expected occurrences is significantly higher than revealed count
-            # 2. The letter hasn't been repeated too many times without changes
-            # 3. For some letters, we may need to try up to 3 times to be sure
-            max_allowed_repeats = 2  # Maximum consecutive unchanged repeats
-            
+            # 2. The letter has NEVER been repeated without changes
             if (letter in expected_occurrences and 
                 expected_occurrences[letter] > revealed_count + 0.5 and
-                agent_function.consecutive_repeats[letter] <= max_allowed_repeats):
+                agent_function.consecutive_repeats.get(letter, 0) == 0):
                 # There's likely more occurrences to be found
                 return letter
 
@@ -404,13 +426,20 @@ def agent_function(request_data, request_info):
             return word
 
     # Select best letter using optimized scoring
-    best_letter = select_best_letter(possible_words, probabilities, feedback, guesses, agent_function.advanced_rules)
+    best_letter = select_best_letter(
+        possible_words, 
+        probabilities, 
+        feedback, 
+        guesses, 
+        agent_function.advanced_rules,
+        agent_function.exhausted_letters
+    )
     if best_letter:
         return best_letter
 
     # Final fallback: return common letters in English
     for letter in 'ANIOERULGSHTMKCBDPYQZVJWFX':
-        if letter not in guesses or (agent_function.advanced_rules and agent_function.consecutive_repeats.get(letter, 0) <= 2):
+        if (letter not in guesses or agent_function.advanced_rules) and letter not in agent_function.exhausted_letters:
             return letter
 
     # Final fallback (should never reach here)
