@@ -1,4 +1,4 @@
-# word-guessing-game
+# Word-Guessing Game
 
 This project develops an AI agent for the 'Guess the Word' game within a structured environment, where the agent must deduce a hidden word based on feedback from previous guesses. The agent leverages probabilistic reasoning and reinforcement learning to refine its guessing strategy, dynamically adjusting its approach based on observed patterns. By optimizing its decision-making process, the agent aims to minimize the number of guesses required while balancing exploration and exploitation. The implementation integrates an adaptive learning mechanism to enhance word prediction accuracy, ensuring an efficient and intelligent gameplay experience.
 
@@ -23,7 +23,6 @@ cities_df = cities_df[cities_df['city_ascii'].str.match(r'^[A-Za-z]+$')]
 cities_df.to_csv('filtered_worldcities.csv', index=False)
 
 print("Filtered CSV file saved as 'filtered_worldcities.csv'")
-
 ```
 
 ### **Preprocessing Overview**  
@@ -94,7 +93,7 @@ The function calculates the **expected reduction in entropy** (information gain)
    ```  
 
 ### **Advanced Rules**  
-When `advanced_rules` is enabled, the function accounts for scenarios where the same letter may appear multiple times in a city name. For example, if the letter `A` appears twice in "DARESSALAAM", the function calculates the probability of each occurrence separately. This is done by grouping words based on the positions of the guessed letter:  
+When `advanced_rules` is enabled, the function accounts for scenarios where the same letter may appear multiple times in a city name. For example, if the letter `A` appears twice in a city name, the function calculates the probability of each occurrence separately. This is done by grouping words based on the positions of the guessed letter:  
 ```python
 outcome = f"pos_{pos}"
 outcome_probs[outcome] += prob / total_occurrences
@@ -114,12 +113,15 @@ if advanced_rules and exhausted_letters and letter in exhausted_letters:
 
 ---
 
----
-
 ## 3. **Word Filtering**
 
+```python
+def filter_words(word_list, feedback, guesses):
+    # ...
+```
+
 ### **Purpose and Theoretical Background**  
-The `filter_words` function is designed for the **simple environment**, where each letter guess reveals all occurrences of that letter in the hidden word. It ensures that only cities consistent with the feedback and previous guesses are retained. This is critical for reducing the search space and improving the agent's efficiency.  
+The `filter_words` function is designed for the **simple environment**, where each letter guess reveals **all occurrences** of that letter in the hidden word. It ensures that only cities consistent with the feedback and previous guesses are retained. This is critical for reducing the search space and improving the agent's efficiency.  
 
 ### **Constraint Checks**  
 The function applies the following constraints to each city in the `word_list`:  
@@ -149,7 +151,22 @@ The function applies the following constraints to each city in the `word_list`:
    ```  
 
 ### **Example**  
-Suppose the feedback is `D---` and the guesses include `A`. The city "DARESSALAAM" would be filtered out because it contains `A`, which is not in the feedback.  
+From the assignment sheet:  
+- **Guess: I**  
+  - **Feedback**: `----I`  
+  - **Valid City**: "MOSHI"  
+  The function ensures that the city "MOSHI" matches the feedback `----I` and does not contain any guessed letters that are not in the feedback.  
+
+- **Guess: H**  
+  - **Feedback**: `-----`  
+  - **Guess: I**  
+  - **Feedback**: `-----`  
+  - **Guess: E**  
+  - **Feedback**: `--E--`  
+  - **Guess: B**  
+  - **Feedback**: `-BE--`  
+  - **Valid City**: "MBEYA"  
+  The function ensures that the city "MBEYA" matches the feedback `-BE--` and does not contain any guessed letters (`H`, `I`) that are not in the feedback.  
 
 ### **Key Insights**  
 - The function ensures that only valid candidates are considered, reducing the computational complexity of subsequent steps.  
@@ -159,8 +176,13 @@ Suppose the feedback is `D---` and the guesses include `A`. The city "DARESSALAA
 
 ## 4. **Advanced Word Filtering**
 
+```python
+def filter_words_advanced(word_list, feedback, guesses):
+    # ...
+```
+
 ### **Purpose and Theoretical Background**  
-The `filter_words_advanced` function is designed for the **advanced environment**, where the same letter may appear multiple times in the hidden word, and each guess reveals only one occurrence at a time. This function extends the basic filtering mechanism to handle such scenarios, ensuring that the agent can adapt to more complex feedback patterns.  
+The `filter_words_advanced` function is designed for the **advanced environment**, where the same letter may appear multiple times in the hidden word, and each guess reveals only **one occurrence** at a time. This function extends the basic filtering mechanism to handle such scenarios, ensuring that the agent can adapt to more complex feedback patterns.  
 
 ### **Key Differences from Basic Filtering**  
 1. **Length Flexibility**:  
@@ -180,7 +202,16 @@ The `filter_words_advanced` function is designed for the **advanced environment*
    ```  
 
 ### **Example**  
-If the feedback is `D-A-` and the guesses include `A`, the city "DARESSALAAM" would be retained because it contains at least two `A`s, matching the feedback.  
+From the assignment sheet:  
+- **Guess: A**  
+  - **Feedback**: `A-------------------`  
+- **Guess: R**  
+  - **Feedback**: `AR------------------`  
+- **Guess: U**  
+  - **Feedback**: `ARU-----------------`  
+- **Guess: ARUSHA**  
+  - **Feedback**: `ARUSHA`  
+  The function ensures that the city "ARUSHA" matches the feedback `ARUSHA` and does not contain any guessed letters that are not in the feedback. The feedback may include extra dashes to disguise the word's length, and the function handles this by considering cities of varying lengths.  
 
 ### **Key Insights**  
 - The function supports more flexible guessing strategies, accommodating complex feedback patterns.  
@@ -301,6 +332,8 @@ The function detects whether advanced rules are active by analyzing the feedback
 ```python
 if agent_function.advanced_rules is None:
     duplicate_letters = len(letter_guesses) != len(set(letter_guesses))
+    letter_mismatch = any(letter in feedback and word.count(letter) > feedback.count(letter) 
+                      for word in agent_function.word_list for letter in letter_guesses)
     agent_function.advanced_rules = duplicate_letters or letter_mismatch
 ```  
 
@@ -347,7 +380,7 @@ The function employs a **hierarchical decision-making process**:
    ```  
 
 4. **Fallback Mechanism**:  
-   If no candidate letters are available, the agent falls back to guessing common English letters:  
+   If no candidate letters are available, the agent falls back to guessing common English letters in a predefined order:  
    ```python
    for letter in 'ANIOERULGSHTMKCBDPYQZVJWFX':
        if letter not in guesses:
@@ -358,5 +391,3 @@ The function employs a **hierarchical decision-making process**:
 - The function dynamically adapts its strategy based on the feedback and the number of remaining cities.  
 - It integrates filtering, probability updates, and letter selection into a cohesive decision-making process.  
 - Fallback mechanisms ensure robustness in edge cases.  
-
----
