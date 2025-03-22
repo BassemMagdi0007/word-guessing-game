@@ -1,12 +1,35 @@
 # word-guessing-game
 
-# Detailed Function Explanations
-
-Below is a detailed explanation of each function in the code, including its purpose, inputs, outputs, and key implementation details. Important notes are highlighted using bullet points.
+This project develops an AI agent for the 'Guess the Word' game within a structured environment, where the agent must deduce a hidden word based on feedback from previous guesses. The agent leverages probabilistic reasoning and reinforcement learning to refine its guessing strategy, dynamically adjusting its approach based on observed patterns. By optimizing its decision-making process, the agent aims to minimize the number of guesses required while balancing exploration and exploitation. The implementation integrates an adaptive learning mechanism to enhance word prediction accuracy, ensuring an efficient and intelligent gameplay experience.
 
 ---
 
 ## 1. **Data Preprocessing**
+```python
+# Load the CSV file containing world cities data
+cities_df = pd.read_csv('worldcities.csv')
+
+# Keep only cities with a population of at least 100,000
+cities_df = cities_df[cities_df['population'] >= 100000]
+
+# Remove city names that contain diacritics, hyphens, or spaces
+# This ensures the original city name matches its ASCII equivalent (without accents) and contains no spaces or hyphens
+cities_df = cities_df[cities_df['city_ascii'].apply(lambda x: x == unidecode(x) and ' ' not in x and '-' not in x)]
+
+# Further filter out city names that contain any non-alphabetic characters (allowing only A-Z letters)
+cities_df = cities_df[cities_df['city_ascii'].str.match(r'^[A-Za-z]+$')]
+
+# Save the cleaned dataset to a new CSV file
+cities_df.to_csv('filtered_worldcities.csv', index=False)
+
+print("Filtered CSV file saved as 'filtered_worldcities.csv'")
+
+```
+
+### **Preprocessing Overview**  
+- The script loads the `worldcities.csv` file and filters cities with a population of at least 100,000.  
+- It removes city names containing diacritics, hyphens, spaces, or non-alphabetic characters to ensure uniformity.  
+- The cleaned dataset is saved as `filtered_worldcities.csv` for further use in the AI agent.  
 
 ```python
 # Load the pre-filtered city data
@@ -21,16 +44,20 @@ non_tanzanian_cities = cities_df[cities_df['iso2'] != 'TZ']['city_ascii'].tolist
 all_cities = tanzanian_cities + non_tanzanian_cities
 ```
 
-- **Purpose:** Prepares the dataset of world cities for use in the guessing game.
-- **Details:**
-  - The dataset is loaded from a CSV file using `pandas`.
-  - City names are converted to uppercase to ensure consistency during comparisons.
-  - Cities are separated into Tanzanian and non-Tanzanian lists based on the `iso2` column (country code).
-  - A combined list of all cities is created for use in the guessing logic.
+### **Purpose:**  
+Prepares the dataset of world cities for use in the AI agent by filtering, cleaning, and structuring the data for efficient and accurate word predictions.  
 
-**Important Notes:**
-- The Tanzanian bias is implemented by prioritizing cities from Tanzania during probability updates.
-- The dataset must contain the `city_ascii` and `iso2` columns for this preprocessing to work.
+### **Details:**  
+- The original dataset, `worldcities.csv`, is filtered to retain only cities with a population of at least 100,000.  
+- Cities with diacritics, hyphens, spaces, or non-alphabetic characters in their names are removed using the `unidecode` library and regex filtering.  
+- The cleaned dataset is saved as `filtered_worldcities.csv` for further processing.  
+- City names are standardized by converting them to uppercase to ensure consistency during comparisons.  
+- Cities are categorized into Tanzanian and non-Tanzanian groups based on their ISO2 country codes.  
+- A combined list of all cities is created, with Tanzanian cities prioritized to introduce a regional bias in the agent’s guessing logic.  
+
+### **Important Notes:**  
+- The Tanzanian bias is implemented by prioritizing cities from Tanzania during probability updates.  
+- The dataset must contain the `city_ascii` and `iso2` columns for this preprocessing to work.  
 
 ---
 
@@ -38,83 +65,126 @@ all_cities = tanzanian_cities + non_tanzanian_cities
 
 ```python
 def calculate_information_gain(possible_words, probabilities, letter, advanced_rules=False, exhausted_letters=None):
+    # ...
 ```
 
-- **Purpose:** Calculates the expected reduction in uncertainty (entropy) when guessing a specific letter.
-- **Inputs:**
-  - `possible_words`: A list of remaining possible cities.
-  - `probabilities`: A list of probabilities associated with each city.
-  - `letter`: The letter being evaluated for guessing.
-  - `advanced_rules`: A flag to enable advanced guessing rules (e.g., repeated letter guesses).
-  - `exhausted_letters`: A set of letters that have been guessed multiple times with no change in feedback.
-- **Output:** The information gain for the given letter, measured in bits.
+### **Purpose and Theoretical Background**  
+The `calculate_information_gain` function is rooted in **information theory**, specifically the concept of **entropy**. Entropy measures the uncertainty or unpredictability of a system. In this context, the system is the set of possible cities, and the goal is to reduce entropy by guessing letters that provide the most information.  
 
-**Implementation Details:**
-- The function first checks if there are no possible words, in which case it returns 0.
-- If advanced rules are enabled and the letter is in the `exhausted_letters` set, the function returns 0 (no information gain for exhausted letters).
-- The current entropy of the system is calculated using the formula:
-  ```python
-  current_entropy = -sum(p * math.log2(p) for p in probabilities if p > 0)
-  ```
-- For advanced rules, the function groups words based on the possible outcomes of guessing the letter (e.g., positions where the letter appears).
-- For standard rules, the function groups words based on patterns of the letter in the word.
-- The expected entropy after guessing the letter is calculated by summing the weighted entropies of each outcome group.
-- The information gain is the difference between the current entropy and the expected entropy.
+The function calculates the **expected reduction in entropy** (information gain) when a specific letter is guessed. This is achieved by comparing the **current entropy** of the system (before the guess) with the **expected entropy** after the guess.  
 
-**Important Notes:**
-- The function handles both standard and advanced rules, making it flexible for different game modes.
-- The use of entropy ensures that the agent prioritizes letters that provide the most information.
+### **Mathematical Formulation**  
+1. **Current Entropy**:  
+   The entropy of the current system is calculated using the formula:  
+   ```python
+   current_entropy = -sum(p * math.log2(p) for p in probabilities if p > 0)
+   ```  
+   Here, `p` represents the probability of each city in the `possible_words` list.  
+
+2. **Expected Entropy**:  
+   The function simulates the possible outcomes of guessing a letter. For each outcome (e.g., the letter appearing in specific positions or not appearing at all), it calculates the conditional entropy. The expected entropy is the weighted sum of these conditional entropies:  
+   ```python
+   expected_entropy = sum(total_prob * entropy for outcome, total_prob in outcome_probs.items())
+   ```  
+
+3. **Information Gain**:  
+   The information gain is the difference between the current entropy and the expected entropy:  
+   ```python
+   information_gain = current_entropy - expected_entropy
+   ```  
+
+### **Advanced Rules**  
+When `advanced_rules` is enabled, the function accounts for scenarios where the same letter may appear multiple times in a city name. For example, if the letter `A` appears twice in "DARESSALAAM", the function calculates the probability of each occurrence separately. This is done by grouping words based on the positions of the guessed letter:  
+```python
+outcome = f"pos_{pos}"
+outcome_probs[outcome] += prob / total_occurrences
+```  
+
+### **Exhausted Letters**  
+Letters that have been guessed multiple times with no change in feedback are considered **exhausted**. These letters provide no additional information and are ignored:  
+```python
+if advanced_rules and exhausted_letters and letter in exhausted_letters:
+    return 0
+```  
+
+### **Key Insights**  
+- The function prioritizes letters that maximize information gain, ensuring efficient reduction of uncertainty.  
+- Advanced rules allow the agent to handle complex scenarios, such as repeated letter occurrences.  
+- Exhausted letters are dynamically excluded to avoid redundant guesses.  
+
+---
 
 ---
 
 ## 3. **Word Filtering**
 
-```python
-def filter_words(word_list, feedback, guesses):
-```
+### **Purpose and Theoretical Background**  
+The `filter_words` function is designed for the **simple environment**, where each letter guess reveals all occurrences of that letter in the hidden word. It ensures that only cities consistent with the feedback and previous guesses are retained. This is critical for reducing the search space and improving the agent's efficiency.  
 
-- **Purpose:** Filters the list of possible cities based on feedback and previous guesses.
-- **Inputs:**
-  - `word_list`: A list of candidate cities.
-  - `feedback`: The current feedback (e.g., revealed letters).
-  - `guesses`: A list of previous guesses (both letters and words).
-- **Output:** A filtered list of cities that match the feedback and guesses.
+### **Constraint Checks**  
+The function applies the following constraints to each city in the `word_list`:  
+1. **Length Constraint**:  
+   The city's length must match the feedback length:  
+   ```python
+   if len(word) != len(feedback):
+       continue
+   ```  
 
-**Implementation Details:**
-- The function iterates through each word in the `word_list`.
-- For each word, it checks if the length matches the feedback length.
-- It then verifies if the revealed positions in the feedback match the corresponding letters in the word.
-- The function ensures that the word does not contain any guessed letters that are not in the feedback.
-- Words that pass all checks are added to the filtered list.
+2. **Revealed Positions**:  
+   The revealed letters in the feedback must match the corresponding positions in the city name:  
+   ```python
+   for i, (char, feedback_char) in enumerate(zip(word, feedback)):
+       if feedback_char != '-' and char != feedback_char:
+           is_match = False
+           break
+   ```  
 
-**Important Notes:**
-- This function is critical for reducing the search space and improving the agent's efficiency.
-- It ensures that only valid candidates are considered for further processing.
+3. **Guessed Letters**:  
+   The city must not contain any guessed letters that are not in the feedback:  
+   ```python
+   for letter in letter_guesses:
+       if letter in word and letter not in feedback:
+           is_match = False
+           break
+   ```  
+
+### **Example**  
+Suppose the feedback is `D---` and the guesses include `A`. The city "DARESSALAAM" would be filtered out because it contains `A`, which is not in the feedback.  
+
+### **Key Insights**  
+- The function ensures that only valid candidates are considered, reducing the computational complexity of subsequent steps.  
+- It dynamically adapts to the feedback and guesses, ensuring consistency with the observed data.  
 
 ---
 
 ## 4. **Advanced Word Filtering**
 
-```python
-def filter_words_advanced(word_list, feedback, guesses):
-```
+### **Purpose and Theoretical Background**  
+The `filter_words_advanced` function is designed for the **advanced environment**, where the same letter may appear multiple times in the hidden word, and each guess reveals only one occurrence at a time. This function extends the basic filtering mechanism to handle such scenarios, ensuring that the agent can adapt to more complex feedback patterns.  
 
-- **Purpose:** Filters the list of possible cities for advanced rules, allowing for repeated letter guesses and positional feedback.
-- **Inputs:**
-  - `word_list`: A list of candidate cities.
-  - `feedback`: The current feedback (e.g., revealed letters).
-  - `guesses`: A list of previous guesses (both letters and words).
-- **Output:** A filtered list of cities that match the feedback and guesses under advanced rules.
+### **Key Differences from Basic Filtering**  
+1. **Length Flexibility**:  
+   Cities shorter than the feedback length are considered if they match the revealed letters:  
+   ```python
+   if len(word) > len(feedback):
+       continue
+   ```  
 
-**Implementation Details:**
-- Similar to `filter_words`, but it allows for words of any length up to the feedback length.
-- It checks if revealed positions match the corresponding letters in the word.
-- The function ensures that the word does not contain any guessed letters that are not in the feedback.
-- Words that pass all checks are added to the filtered list.
+2. **Repeated Letter Handling**:  
+   The function checks if the city contains at least as many occurrences of a letter as revealed in the feedback:  
+   ```python
+   for i in range(len(word)):
+       if i < len(feedback) and feedback[i] != '-' and word[i] != feedback[i]:
+           is_match = False
+           break
+   ```  
 
-**Important Notes:**
-- This function is used when advanced rules are enabled, allowing for more flexible guessing strategies.
-- It supports scenarios where the same letter may appear multiple times in the word.
+### **Example**  
+If the feedback is `D-A-` and the guesses include `A`, the city "DARESSALAAM" would be retained because it contains at least two `A`s, matching the feedback.  
+
+### **Key Insights**  
+- The function supports more flexible guessing strategies, accommodating complex feedback patterns.  
+- It ensures that the agent can handle repeated letter occurrences, improving its adaptability.  
 
 ---
 
@@ -122,22 +192,36 @@ def filter_words_advanced(word_list, feedback, guesses):
 
 ```python
 def update_word_probabilities(word_list):
+    # ...
 ```
 
-- **Purpose:** Updates the probabilities of each city based on Tanzanian bias.
-- **Inputs:**
-  - `word_list`: A list of candidate cities.
-- **Output:** A list of probabilities corresponding to each city.
+### **Purpose and Theoretical Background**  
+The `update_word_probabilities` function implements a **Bayesian updating** mechanism. It adjusts the probabilities of each city based on the **Tanzanian bias**, ensuring that Tanzanian cities are prioritized during guessing. This function is used in both simple and advanced environments.  
 
-**Implementation Details:**
-- The function first separates Tanzanian and non-Tanzanian cities from the `word_list`.
-- It assigns a higher weight (0.7) to Tanzanian cities and a lower weight (0.3) to non-Tanzanian cities.
-- Probabilities are calculated by dividing the weight by the number of cities in each category.
-- If no Tanzanian cities are present, the weight is set to 0.
+### **Mathematical Formulation**  
+1. **Tanzanian Bias**:  
+   Tanzanian cities are assigned a higher weight (0.7 by default), while non-Tanzanian cities share the remaining probability mass (0.3):  
+   ```python
+   tz_weight = 0.7 if len(tz_cities) > 0 else 0
+   ```  
 
-**Important Notes:**
-- The Tanzanian bias is dynamic and adjusts based on the remaining candidate cities.
-- This function ensures that Tanzanian cities are prioritized during guessing.
+2. **Probability Calculation**:  
+   The probability of each city is calculated as:  
+   ```python
+   if word in tanzanian_cities:
+       prob = tz_weight / len(tz_cities)
+   else:
+       prob = (1 - tz_weight) / len(non_tz_cities)
+   ```  
+
+### **Example**  
+If there are 3 Tanzanian cities and 7 non-Tanzanian cities, the probabilities would be:  
+- Tanzanian cities: `0.7 / 3 ≈ 0.233` each.  
+- Non-Tanzanian cities: `0.3 / 7 ≈ 0.043` each.  
+
+### **Key Insights**  
+- The Tanzanian bias is dynamic and adjusts based on the number of remaining Tanzanian cities.  
+- If no Tanzanian cities remain, the bias is set to 0, and all probabilities are distributed equally among non-Tanzanian cities.  
 
 ---
 
@@ -145,28 +229,52 @@ def update_word_probabilities(word_list):
 
 ```python
 def select_best_letter(possible_words, probabilities, feedback, guesses, advanced_rules=False, exhausted_letters=None):
+    # ...
 ```
 
-- **Purpose:** Selects the best letter to guess based on information gain and positional value.
-- **Inputs:**
-  - `possible_words`: A list of remaining possible cities.
-  - `probabilities`: A list of probabilities associated with each city.
-  - `feedback`: The current feedback (e.g., revealed letters).
-  - `guesses`: A list of previous guesses (both letters and words).
-  - `advanced_rules`: A flag to enable advanced guessing rules.
-  - `exhausted_letters`: A set of letters that have been guessed multiple times with no change in feedback.
-- **Output:** The best letter to guess.
+### **Purpose and Theoretical Background**  
+The `select_best_letter` function implements a **decision-making mechanism** that combines **information gain** and **positional value** to select the most informative letter to guess. This function is used in both simple and advanced environments, but its behavior adapts based on the `advanced_rules` flag.  
 
-**Implementation Details:**
-- The function first identifies candidate letters that haven't been guessed yet.
-- For advanced rules, it considers repeating letters if they are likely to appear multiple times in the word.
-- It calculates the information gain and positional value for each candidate letter.
-- The final score for each letter is a weighted combination of information gain and positional value.
-- The letter with the highest score is selected as the best guess.
+### **Mathematical Formulation**  
+1. **Information Gain**:  
+   The information gain for each candidate letter is calculated using the `calculate_information_gain` function:  
+   ```python
+   info_gains[letter] = calculate_information_gain(possible_words, probabilities, letter, advanced_rules, exhausted_letters)
+   ```  
 
-**Important Notes:**
-- The function uses a combination of information gain and positional value to optimize letter selection.
-- It supports both standard and advanced rules, making it versatile for different game modes.
+2. **Positional Value**:  
+   The positional value measures how well a letter discriminates between cities at specific positions:  
+   ```python
+   split_ratio = with_letter / total
+   position_splits[i] = 4 * split_ratio * (1 - split_ratio)
+   ```  
+
+3. **Combined Score**:  
+   The final score for each letter is a weighted combination of normalized information gain and positional value:  
+   ```python
+   norm_gain = info_gains[letter] / max(info_gains.values())
+   norm_pos = positional_values[letter] / max(positional_values.values())
+   letter_scores[letter] = (info_gain_weight * norm_gain + positional_weight * norm_pos)
+   ```  
+
+### **Advanced Rules**  
+When `advanced_rules` is enabled, the function considers repeating letters if they are likely to appear multiple times in the word:  
+```python
+if letter in expected_occurrences and expected_occurrences[letter] > revealed_count + 0.5:
+    pass  # Keep the letter as a candidate
+```  
+
+### **Exhausted Letters**  
+Letters that have been guessed multiple times with no change in feedback are penalized:  
+```python
+if letter in agent_function.consecutive_repeats and agent_function.consecutive_repeats[letter] > 0:
+    letter_scores[letter] *= 0.1  # Apply a 90% penalty
+```  
+
+### **Key Insights**  
+- The function dynamically adjusts its strategy based on the stage of the game (early vs. late).  
+- It prioritizes letters that maximize both information gain and positional discrimination.  
+- Advanced rules and exhausted letter handling ensure adaptability to complex scenarios.  
 
 ---
 
@@ -174,238 +282,81 @@ def select_best_letter(possible_words, probabilities, feedback, guesses, advance
 
 ```python
 def agent_function(request_data, request_info):
+    # ...
 ```
 
-- **Purpose:** The main function that processes feedback and guesses to determine the next move.
-- **Inputs:**
-  - `request_data`: Contains feedback and guesses.
-  - `request_info`: Additional information about the request.
-- **Output:** The next guess (either a letter or a city name).
+### **Purpose and Theoretical Background**  
+The `agent_function` is the **core decision-making engine** of the agent. It integrates all components—filtering, probability updates, and letter selection—to determine the next move. The function operates in both simple and advanced environments, dynamically adapting its behavior based on the feedback and guesses.  
 
-**Implementation Details:**
-- The function initializes state variables (e.g., word list, incorrect words) on the first run.
-- It detects whether advanced rules are being used based on the feedback and guesses.
-- The function filters the list of possible cities based on feedback and guesses.
-- It updates the probabilities of each city using `update_word_probabilities`.
-- If only one city remains, it guesses that city.
-- Otherwise, it selects the best letter to guess using `select_best_letter`.
-
-**Important Notes:**
-- The function dynamically adjusts its strategy based on the game mode (standard or advanced rules).
-- It ensures that the agent makes optimal guesses by combining filtering, probability updates, and letter selection.
-
----
-
-## 8. **Execution Flow**
-
+### **State Initialization**  
+On the first run, the function initializes state variables, such as the word list and advanced rules flag:  
 ```python
-if __name__ == '__main__':
-```
+if not hasattr(agent_function, 'word_list'):
+    agent_function.word_list = all_cities
+    agent_function.advanced_rules = None
+```  
 
-- **Purpose:** Runs the agent in a simulated environment.
-- **Inputs:** Command-line arguments (e.g., configuration file).
-- **Output:** Results of the guessing game.
+### **Advanced Rules Detection**  
+The function detects whether advanced rules are active by analyzing the feedback and guesses:  
+```python
+if agent_function.advanced_rules is None:
+    duplicate_letters = len(letter_guesses) != len(set(letter_guesses))
+    agent_function.advanced_rules = duplicate_letters or letter_mismatch
+```  
 
-**Implementation Details:**
-- The function sets up logging for debugging and monitoring.
-- It runs the agent in a simulated environment using the `client.run` function.
-- The agent is executed for a specified number of runs (e.g., 100,000).
+### **Feedback Processing**  
+The function processes feedback to update the list of possible cities. In the **simple environment**, it uses `filter_words`:  
+```python
+if not agent_function.advanced_rules:
+    possible_words = filter_words(agent_function.word_list, feedback, guesses)
+```  
+In the **advanced environment**, it uses `filter_words_advanced`:  
+```python
+else:
+    possible_words = filter_words_advanced(agent_function.word_list, feedback, guesses)
+```  
 
-**Important Notes:**
-- The execution flow is designed for testing and evaluation.
-- It allows for parallel runs to improve efficiency during testing.
+### **Probability Updates**  
+The probabilities of the remaining cities are updated using the `update_word_probabilities` function:  
+```python
+probabilities = update_word_probabilities(possible_words)
+```  
 
----
+### **Decision Logic**  
+The function employs a **hierarchical decision-making process**:  
+1. **Early Word Guessing**:  
+   If the number of possible cities is small (≤ 3) or a city has a high probability (> 0.7), the agent guesses the most likely city:  
+   ```python
+   if len(possible_words) <= 3 or max(probabilities) > 0.7:
+       return word_prob_pairs[0][1]  # Guess the most likely city
+   ```  
 
-This detailed explanation provides a comprehensive understanding of each function in the code, including its purpose, inputs, outputs, and key implementation details. The agent is designed to be efficient, adaptable, and capable of handling both standard and advanced guessing rules.
+2. **Single Word Remaining**:  
+   If only one city remains, the agent guesses it:  
+   ```python
+   if len(possible_words) == 1:
+       return possible_words[0]
+   ```  
 
+3. **Letter Selection**:  
+   Otherwise, the agent selects the best letter to guess using `select_best_letter`:  
+   ```python
+   best_letter = select_best_letter(possible_words, probabilities, feedback, guesses, agent_function.advanced_rules, agent_function.exhausted_letters)
+   if best_letter:
+       return best_letter
+   ```  
 
-# Detailed Function Explanations
+4. **Fallback Mechanism**:  
+   If no candidate letters are available, the agent falls back to guessing common English letters:  
+   ```python
+   for letter in 'ANIOERULGSHTMKCBDPYQZVJWFX':
+       if letter not in guesses:
+           return letter
+   ```  
 
-Below is a detailed explanation of each function in the code, including their purpose, inputs, outputs, and key design decisions. Important notes are highlighted using bullet points.
-
----
-
-## 1. **Data Preprocessing**
-
-### Purpose:
-The data preprocessing step loads and prepares the city dataset for use in the agent. It ensures consistency in city names and separates Tanzanian cities from non-Tanzanian ones to apply a bias toward Tanzanian cities.
-
-### Inputs:
-- A CSV file (`filtered_worldcities.csv`) containing city data.
-
-### Outputs:
-- A list of Tanzanian cities (`tanzanian_cities`).
-- A list of non-Tanzanian cities (`non_tanzanian_cities`).
-- A combined list of all cities (`all_cities`).
-
-### Explanation:
-The function reads the city dataset using `pandas` and converts city names to uppercase to ensure consistency during comparisons. It then filters the dataset to separate Tanzanian cities (identified by the ISO2 code 'TZ') from non-Tanzanian cities. These lists are used throughout the agent to prioritize Tanzanian cities when making guesses.
-
-**Important Notes:**
-- The Tanzanian bias is dynamic and adjusts based on the remaining possible cities.
-- Uppercase conversion ensures case-insensitive matching during filtering and guessing.
-
----
-
-## 2. **Information Gain Calculation**
-
-### Purpose:
-This function calculates the expected reduction in uncertainty (entropy) when guessing a specific letter. It helps the agent choose the letter that provides the most information about the remaining possible cities.
-
-### Inputs:
-- `possible_words`: A list of remaining possible cities.
-- `probabilities`: A list of probabilities associated with each city.
-- `letter`: The letter being evaluated.
-- `advanced_rules`: A flag indicating whether advanced rules are active.
-- `exhausted_letters`: A set of letters that have been guessed multiple times with no change in feedback.
-
-### Outputs:
-- The information gain for the given letter (a float value).
-
-### Explanation:
-The function calculates the current entropy of the system based on the probabilities of the remaining cities. It then simulates the expected entropy after guessing the letter by considering all possible outcomes (e.g., the letter appearing in specific positions or not appearing at all). The information gain is the difference between the current entropy and the expected entropy.
-
-**Important Notes:**
-- Advanced rules allow the agent to handle scenarios where letters may appear multiple times in a city name.
-- Exhausted letters (those guessed multiple times with no change in feedback) are ignored to avoid redundant guesses.
+### **Key Insights**  
+- The function dynamically adapts its strategy based on the feedback and the number of remaining cities.  
+- It integrates filtering, probability updates, and letter selection into a cohesive decision-making process.  
+- Fallback mechanisms ensure robustness in edge cases.  
 
 ---
-
-## 3. **Word Filtering**
-
-### Purpose:
-This function filters the list of possible cities based on the current feedback and previous guesses. It ensures that only cities consistent with the feedback and guesses are considered.
-
-### Inputs:
-- `word_list`: A list of candidate cities.
-- `feedback`: The current feedback (e.g., revealed letters).
-- `guesses`: A list of previous guesses.
-
-### Outputs:
-- A filtered list of cities that match the feedback and guesses.
-
-### Explanation:
-The function iterates through the list of candidate cities and checks each city against the feedback and guesses. A city is retained if:
-1. Its length matches the feedback length.
-2. All revealed letters in the feedback match the corresponding positions in the city name.
-3. It does not contain any guessed letters that are not in the feedback.
-
-**Important Notes:**
-- The function ensures that the agent only considers cities that are logically possible given the feedback.
-- It handles edge cases, such as when a guessed letter appears in the feedback but not at the expected position.
-
----
-
-## 4. **Advanced Word Filtering**
-
-### Purpose:
-This function extends the basic word filtering to handle advanced rules, such as repeated letter guesses and positional feedback. It allows the agent to consider cities of varying lengths and repeated letter occurrences.
-
-### Inputs:
-- `word_list`: A list of candidate cities.
-- `feedback`: The current feedback (e.g., revealed letters).
-- `guesses`: A list of previous guesses.
-
-### Outputs:
-- A filtered list of cities that match the feedback and guesses under advanced rules.
-
-### Explanation:
-The function is similar to the basic word filtering function but relaxes some constraints to accommodate advanced rules. For example:
-- Cities shorter than the feedback length are considered if they match the revealed letters.
-- Repeated letter occurrences are handled by checking if the city contains at least as many occurrences of a letter as revealed in the feedback.
-
-**Important Notes:**
-- This function is crucial for handling scenarios where the same letter may appear multiple times in a city name.
-- It ensures the agent can adapt to more complex feedback patterns.
-
----
-
-## 5. **Probability Updates**
-
-### Purpose:
-This function updates the probabilities of each city based on the Tanzanian bias and the remaining possible cities. It ensures that Tanzanian cities are prioritized when making guesses.
-
-### Inputs:
-- `word_list`: A list of candidate cities.
-
-### Outputs:
-- A list of probabilities corresponding to each city.
-
-### Explanation:
-The function calculates the probability of each city by considering whether it is Tanzanian or non-Tanzanian. Tanzanian cities are assigned a higher weight (0.7 by default), while non-Tanzanian cities share the remaining probability mass. The probabilities are normalized to sum to 1.
-
-**Important Notes:**
-- The Tanzanian bias is dynamic and adjusts based on the number of remaining Tanzanian cities.
-- If no Tanzanian cities remain, the bias is set to 0, and all probabilities are distributed equally among non-Tanzanian cities.
-
----
-
-## 6. **Letter Selection**
-
-### Purpose:
-This function selects the best letter to guess based on a combination of information gain and positional value. It ensures that the agent chooses the most informative letter while considering the likelihood of the letter appearing in specific positions.
-
-### Inputs:
-- `possible_words`: A list of remaining possible cities.
-- `probabilities`: A list of probabilities associated with each city.
-- `feedback`: The current feedback (e.g., revealed letters).
-- `guesses`: A list of previous guesses.
-- `advanced_rules`: A flag indicating whether advanced rules are active.
-- `exhausted_letters`: A set of letters that have been guessed multiple times with no change in feedback.
-
-### Outputs:
-- The best letter to guess (a single character).
-
-### Explanation:
-The function evaluates each candidate letter by calculating its information gain and positional value. The information gain measures how much the letter reduces uncertainty, while the positional value measures how well the letter discriminates between cities at specific positions. The final score for each letter is a weighted combination of these two metrics.
-
-**Important Notes:**
-- The function prioritizes letters that are likely to appear in multiple positions.
-- Exhausted letters are penalized to avoid redundant guesses.
-- The weights for information gain and positional value are adjusted based on the stage of the game (early vs. late).
-
----
-
-## 7. **Main Agent Function**
-
-### Purpose:
-This is the core function that processes feedback and guesses to determine the agent's next move. It integrates all the components of the agent, including filtering, probability updates, and letter selection.
-
-### Inputs:
-- `request_data`: Contains feedback and guesses.
-- `request_info`: Additional information about the request.
-
-### Outputs:
-- The next guess (either a letter or a city name).
-
-### Explanation:
-The function initializes state variables (e.g., word list, incorrect words) on the first run. It then filters the list of possible cities based on the feedback and guesses, updates the probabilities, and selects the best letter or city to guess. The function also handles advanced rules, such as repeated letter guesses and positional feedback.
-
-**Important Notes:**
-- The function dynamically adjusts its strategy based on the feedback and the number of remaining cities.
-- It includes fallback mechanisms to handle edge cases, such as when no candidate letters are available.
-
----
-
-## 8. **Execution Flow**
-
-### Purpose:
-This block runs the agent in a simulated environment. It sets up logging and integrates with the provided `client.py` to handle multiple runs.
-
-### Inputs:
-- Command-line arguments (e.g., configuration file).
-
-### Outputs:
-- Results of the guessing game.
-
-### Explanation:
-The execution flow initializes logging and runs the agent using the `client.py` script. It supports parallel runs for performance evaluation and includes a run limit to control the number of simulations.
-
-**Important Notes:**
-- Logging is configured to provide detailed output for debugging and analysis.
-- The run limit can be adjusted for testing or performance evaluation.
-
----
-
-This detailed explanation provides a comprehensive understanding of each function in the code, including their purpose, inputs, outputs, and key design decisions. The agent is designed to be efficient, adaptable, and capable of handling both standard and advanced guessing rules.
