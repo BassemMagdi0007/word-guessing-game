@@ -1,9 +1,58 @@
 # Word-Guessing Game
 
+## Table of Contents
+
+- [Introduction](#introduction)
+  - [Key Features](#key-features)
+- [Setup](#setup)
+  - [Repository Content](#repository-content)
+  - [How to Run the Code](#how-to-run-the-code)
+  - [Used Libraries](#used-libraries)
+- [Code Structure](#code-structure)
+- [Self-Evaluation and Design Decisions](#self-evaluation-and-design-decisions)
+- [Output Format](#output-format)
+
+
+## Introduction
+
 This project develops an AI agent for the 'Guess the Word' game within a structured environment, where the agent must deduce a hidden word based on feedback from previous guesses. The agent leverages probabilistic reasoning and reinforcement learning to refine its guessing strategy, dynamically adjusting its approach based on observed patterns. By optimizing its decision-making process, the agent aims to minimize the number of guesses required while balancing exploration and exploitation. The implementation integrates an adaptive learning mechanism to enhance word prediction accuracy, ensuring an efficient and intelligent gameplay experience.
 
----
+### Key Features
+- **Probabilistic Reasoning**: The agent uses probability distributions to prioritize likely cities.
+- **Information Gain**: The agent selects letters that maximize the reduction in uncertainty (entropy).
+- **Adaptive Learning**: The agent dynamically adjusts its strategy based on feedback and game rules.
+- **Tanzanian Bias**: The agent prioritizes Tanzanian cities, introducing a regional bias in its guessing logic.
 
+
+## Setup
+
+### Repository Content
+The repository contains the following files:
+- **example.py**: The main code for the AI agent.
+- **filtered_worldcities.csv**: The filtered dataset of world cities used by the agent.
+- **filterCSV.py**: The script used to filter the original `worldcities.csv` file to create `filtered_worldcities.csv`.
+
+### How to Run the Code
+To run the AI agent in different environments, use the following commands:
+- **Simple Environment**:
+  ```bash
+  python example.py env/simple-env.json
+  ```
+- **Advanced Environment**:
+  ```bash
+  python example.py env/advanced-env.json
+  ```
+
+### Used Libraries
+The following Python libraries are used in this project:
+- **pandas**: For data manipulation and preprocessing.
+- **math**: For mathematical operations, such as calculating entropy.
+- **collections.defaultdict**: For efficient storage and retrieval of data.
+- **string**: For handling string operations, such as uppercase conversion.
+
+## Code Structure
+
+The code is organized into the following key components:
 ## 1. **Data Preprocessing**
 ```python
 # Load the CSV file containing world cities data
@@ -58,7 +107,6 @@ Prepares the dataset of world cities for use in the AI agent by filtering, clean
 - The Tanzanian bias is implemented by prioritizing cities from Tanzania during probability updates.  
 - The dataset must contain the `city_ascii` and `iso2` columns for this preprocessing to work.  
 
----
 
 ## 2. **Information Gain Calculation**
 
@@ -111,7 +159,6 @@ if advanced_rules and exhausted_letters and letter in exhausted_letters:
 - Advanced rules allow the agent to handle complex scenarios, such as repeated letter occurrences.  
 - Exhausted letters are dynamically excluded to avoid redundant guesses.  
 
----
 
 ## 3. **Word Filtering**
 
@@ -172,7 +219,6 @@ From the assignment sheet:
 - The function ensures that only valid candidates are considered, reducing the computational complexity of subsequent steps.  
 - It dynamically adapts to the feedback and guesses, ensuring consistency with the observed data.  
 
----
 
 ## 4. **Advanced Word Filtering**
 
@@ -217,7 +263,6 @@ From the assignment sheet:
 - The function supports more flexible guessing strategies, accommodating complex feedback patterns.  
 - It ensures that the agent can handle repeated letter occurrences, improving its adaptability.  
 
----
 
 ## 5. **Probability Updates**
 
@@ -254,7 +299,6 @@ If there are 3 Tanzanian cities and 7 non-Tanzanian cities, the probabilities wo
 - The Tanzanian bias is dynamic and adjusts based on the number of remaining Tanzanian cities.  
 - If no Tanzanian cities remain, the bias is set to 0, and all probabilities are distributed equally among non-Tanzanian cities.  
 
----
 
 ## 6. **Letter Selection**
 
@@ -307,7 +351,6 @@ if letter in agent_function.consecutive_repeats and agent_function.consecutive_r
 - It prioritizes letters that maximize both information gain and positional discrimination.  
 - Advanced rules and exhausted letter handling ensure adaptability to complex scenarios.  
 
----
 
 ## 7. **Main Agent Function**
 
