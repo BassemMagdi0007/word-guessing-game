@@ -434,3 +434,75 @@ The function employs a **hierarchical decision-making process**:
 - The function dynamically adapts its strategy based on the feedback and the number of remaining cities.  
 - It integrates filtering, probability updates, and letter selection into a cohesive decision-making process.  
 - Fallback mechanisms ensure robustness in edge cases.  
+
+
+
+## Self Evaluation and Design Decisions
+
+#### **1. Preprocessing on `city_ascii` Column Instead of `cities` Column**
+- **Problem**: Initially, preprocessing was applied to the `cities` column, which led to incorrect conversions of city names (e.g., converting "Ä°zmir" to "Azmir" instead of "Izmir").
+- **Solution**: The preprocessing was shifted to the `city_ascii` column
+- **Impact**: By using `city_ascii`, the city names remain consistent and accurate, avoiding errors in filtering and matching during the game. This is critical for correctly identifying cities based on feedback and guesses.
+
+---
+
+#### **2. Handling Repeated Letter Guesses with `exhausted_letters`**
+- **Problem**: In the advanced rules environment, the agent sometimes repeatedly guessed the same letter even when the feedback did not change, leading to wasted guesses.
+- **Solution**: The `exhausted_letters` set was introduced to track letters that have been guessed multiple times without any change in feedback. If a letter is in this set, it is excluded from future guesses.
+- **Implementation**:
+  - The `consecutive_repeats` dictionary tracks how many times a letter has been guessed consecutively without changing the feedback.
+  - If a letter is guessed twice with no change in feedback, it is added to `exhausted_letters`.
+  - The `select_best_letter` function checks `exhausted_letters` and avoids guessing those letters.
+- **Impact**: This significantly reduces wasted guesses, improving the agent's efficiency in the advanced rules environment.
+
+---
+
+#### **3. Handling `-` in Advanced Rules Without Stripping**
+- **Problem**: Initially, I attempted to strip `-` characters in the advanced rules environment, which led to incorrect filtering and wrong city guesses.
+- **Solution**: The stripping logic was removed, and the `filter_words_advanced` function was updated to handle `-` characters correctly.
+- **Implementation**:
+  - The `filter_words_advanced` function checks each position in the feedback:
+    - If the feedback character is `-`, it allows any character in that position (as long as it doesn't conflict with other constraints).
+    - If the feedback character is not `-`, it ensures the word matches the feedback at that position.
+  - This approach allows the agent to handle cases where many positions are still hidden (`-`) while still narrowing down the possible words based on revealed letters.
+- **Impact**: The agent can now correctly guess city names even when most of the feedback consists of `-` characters.
+
+---
+
+#### **4. Explanation of Weight Values for Information Gain and Positional Value**
+- **Weights**:
+  - `info_gain_weight = 0.7`
+  - `positional_weight = 0.3`
+- **Reasoning**:
+  - **Information Gain**: Measures how much a letter reduces uncertainty about the possible words. This is the primary metric for selecting letters, as it directly impacts the agent's ability to narrow down the word list.
+  - **Positional Value**: Measures how well a letter discriminates between words at specific positions. This is secondary but still important, especially in the late game when fewer positions remain to be revealed.
+- **Dynamic Adjustment**:
+  - When `revealed_ratio < 0.5` (late game), the weights are adjusted to:
+    - `info_gain_weight = 0.6`
+    - `positional_weight = 0.4`
+  - **Reason**: In the late game, positional discrimination becomes more critical because fewer letters remain to be guessed, and the agent needs to focus on specific positions to identify the correct word.
+- **Impact**: This balanced approach ensures the agent prioritizes letters that provide the most information while also considering their positional value, especially in the late game.
+
+---
+
+#### **5. Early Word Guessing to Lower Guess Count**
+- **Implementation**:
+  - The agent checks two conditions for early word guessing:
+    1. If there are 3 or fewer possible words and at least 2 letters have been guessed.
+    2. If the highest probability among the possible words exceeds 0.7.
+  - If either condition is met, the agent guesses the most probable word from the remaining candidates.
+- **Reasoning**:
+  - Early word guessing reduces the number of guesses required to win the game, especially when the agent is confident about the correct word.
+  - This strategy is particularly effective in the standard rules environment, where the agent can often identify the correct word with high confidence after a few letter guesses.
+- **Impact**: This optimization significantly reduces the average number of guesses per game, improving the agent's overall performance.
+
+## Output Format
+For Simple environment the code scores: <br >
+<img width="523" alt="image" src="https://github.com/user-attachments/assets/16bb8cc8-a728-4984-9534-2d35de691843" />
+
+
+For Advanced environment the code scores: <br >
+<img width="524" alt="image" src="https://github.com/user-attachments/assets/18b2d362-d3c9-49ce-b1ca-efde87098474" />
+
+
+
